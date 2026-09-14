@@ -7,3 +7,6 @@ db/schema.rb linguist-generated
 vendor/* linguist-vendored
 config/credentials/*.yml.enc diff=rails_credentials
 config/credentials.yml.enc diff=rails_credentials
+
+# Keep LF line endings on every platform (bin/ scripts and Ruby sources are generated with LF).
+* text=auto eol=lf
