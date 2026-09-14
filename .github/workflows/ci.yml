@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -30,7 +30,7 @@ jobs:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -38,7 +38,7 @@ jobs:
           bundler-cache: true
 
       - name: Prepare RuboCop cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         env:
           DEPENDENCIES_HASH: ${{ hashFiles('.ruby-version', '**/.rubocop.yml', '**/.rubocop_todo.yml', 'Gemfile.lock') }}
         with:
@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -79,9 +79,10 @@ jobs:
 
       - name: Start an FTP server
         run: |
-          docker run -d --name ftp -p 2121:21 -p 21000-21010:21000-21010 \
-            -e USERS="drive|drivepass|/ftp/drive" -e ADDRESS=localhost -e MIN_PORT=21000 -e MAX_PORT=21010 \
-            delfer/alpine-ftp-server:latest
+          # Same pinned image and foreground vsftpd as compose.yaml (see the note there).
+          docker run -d --name ftp -p 2121:21 -p 21000-21010:21000-21010 -e USERS="drive|drivepass|/ftp/drive" \
+            delfer/alpine-ftp-server@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac \
+            vsftpd /etc/vsftpd/vsftpd.conf -obackground=NO -opasv_min_port=21000 -opasv_max_port=21010 -opasv_address=127.0.0.1
           for attempt in $(seq 1 30); do
             (exec 3<>/dev/tcp/127.0.0.1/2121) 2>/dev/null && break
             sleep 1
@@ -90,11 +91,11 @@ jobs:
       - name: Run tests
         env:
           RAILS_ENV: test
-          S3_TEST_ENDPOINT: http://localhost:9000
+          S3_TEST_ENDPOINT: http://127.0.0.1:9000
           S3_TEST_BUCKET: simple-drive-test
           S3_TEST_ACCESS_KEY_ID: minioadmin
           S3_TEST_SECRET_ACCESS_KEY: minioadmin
-          FTP_TEST_HOST: localhost
+          FTP_TEST_HOST: 127.0.0.1
           FTP_TEST_PORT: "2121"
           FTP_TEST_USERNAME: drive
           FTP_TEST_PASSWORD: drivepass

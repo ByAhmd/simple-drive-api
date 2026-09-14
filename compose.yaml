@@ -30,17 +30,22 @@ services:
       && mc mb --ignore-existing local/simple-drive-test"
 
   # FTP server for the optional FTP backend and its integration tests; the
-  # account is as throwaway as the MinIO one.
+  # account is as throwaway as the MinIO one. The image has no version tags, so
+  # it is pinned by digest. Its start script backgrounds vsftpd and races to
+  # find the PID, which kills the container on some starts, so vsftpd runs in
+  # the foreground instead. The script still creates the account from USERS
+  # first, and the -o overrides must follow the config file, which would
+  # otherwise reset them.
   ftp:
-    image: delfer/alpine-ftp-server:latest
+    image: delfer/alpine-ftp-server@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
+    command: >
+      vsftpd /etc/vsftpd/vsftpd.conf -obackground=NO
+      -opasv_min_port=21000 -opasv_max_port=21010 -opasv_address=127.0.0.1
     ports:
       - "127.0.0.1:2121:21"
       - "127.0.0.1:21000-21010:21000-21010"
     environment:
       USERS: "drive|drivepass|/ftp/drive"
-      ADDRESS: localhost
-      MIN_PORT: 21000
-      MAX_PORT: 21010
 
 volumes:
   minio-data:
