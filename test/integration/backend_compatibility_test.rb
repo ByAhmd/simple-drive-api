@@ -23,6 +23,15 @@ class BackendCompatibilityTest < ActionDispatch::IntegrationTest
         )
       end
     end
+    if ENV["FTP_TEST_HOST"].present?
+      backends["ftp"] = lambda do
+        Storage::FtpBackend.new(
+          host: ENV.fetch("FTP_TEST_HOST"), port: Integer(ENV.fetch("FTP_TEST_PORT", 21)),
+          username: ENV.fetch("FTP_TEST_USERNAME"), password: ENV.fetch("FTP_TEST_PASSWORD"),
+          root: "integration-tests"
+        )
+      end
+    end
     backends
   end
 

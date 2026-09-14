@@ -38,7 +38,7 @@ Every error, from whichever layer produced it, has the same shape:
 | 415    | `unsupported_media_type` | `POST /v1/blobs` without `Content-Type: application/json`.                               |
 | 422    | `validation_failed`      | A field is missing, has the wrong type, the id is invalid, or `data` is not valid Base64. |
 | 500    | `internal_error`         | An unexpected error; details are logged server-side only.                                |
-| 503    | `storage_unavailable`    | The storage backend failed (I/O error, S3 error or timeout) or cannot serve this blob.   |
+| 503    | `storage_unavailable`    | The storage backend failed (I/O error, S3 or FTP error, timeout) or cannot serve this blob. |
 
 ## POST /v1/blobs
 

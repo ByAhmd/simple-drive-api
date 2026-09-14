@@ -7,6 +7,10 @@ gem "sqlite3", ">= 2.1"
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
 
+# Ruby's FTP client, used by the FTP storage backend; a bundled gem since
+# Ruby 3.1, so it has to be declared to be loadable under Bundler
+gem "net-ftp"
+
 # json 3.0 made JSON.parse's options keyword-only, which Active Support 8.1.3
 # does not pass yet; every JSON request body would fail to parse.
 gem "json", "< 3"

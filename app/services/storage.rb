@@ -11,7 +11,8 @@ module Storage
   BACKENDS = {
     "local" => LocalBackend,
     "database" => DatabaseBackend,
-    "s3" => S3Backend
+    "s3" => S3Backend,
+    "ftp" => FtpBackend
   }.freeze
 
   # Builds the backend named by +settings.storage_backend+ from that backend's

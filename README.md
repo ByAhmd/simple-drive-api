@@ -3,9 +3,9 @@
 Simple Drive is a small object storage service written in Ruby on Rails. Clients store a blob of
 binary data under an identifier of their choosing and read it back later, through a JSON API
 protected by a bearer token. Where the bytes actually live is a deployment decision: the same
-API is served by a local directory, a database table or any S3-compatible service, and the S3
-integration speaks the S3 protocol directly over HTTP with a hand-written Signature V4 signer
-rather than an SDK.
+API is served by a local directory, a database table, any S3-compatible service or an FTP
+server, and the S3 integration speaks the S3 protocol directly over HTTP with a hand-written
+Signature V4 signer rather than an SDK.
 
 The API reference lives in [docs/API.md](docs/API.md).
 
@@ -42,7 +42,8 @@ Blobs::Store / Blobs::Retrieve ─ validation, Base64, metadata row, consistency
 Storage::Backend ─ write(key, data) / read(key) / delete(key)
    ├── Storage::LocalBackend      files below a configured directory
    ├── Storage::DatabaseBackend   the blob_contents table
-   └── Storage::S3Backend         Storage::S3::Client + Storage::S3::Signer over Net::HTTP
+   ├── Storage::S3Backend         Storage::S3::Client + Storage::S3::Signer over Net::HTTP
+   └── Storage::FtpBackend        files on an FTP server through Net::FTP (bonus)
 ```
 
 | Layer | Where | Responsibility |
@@ -64,11 +65,12 @@ interface; switching backends is a configuration change and touches no controlle
 - Ruby 3.4 (developed and tested with 3.4.10; see `.ruby-version`)
 - Rails 8.1 (8.1.3.1 in `Gemfile.lock`), installed by Bundler
 - SQLite 3, through the `sqlite3` gem (no separate server needed)
-- Optional: Docker, to run MinIO for the S3 backend locally and for the S3 integration tests
+- Optional: Docker, to run MinIO (S3) and an FTP server locally for the integration tests
 
-The Gemfile adds four gems to the Rails defaults: `dotenv-rails` (development/test, loads
-`.env`), `webmock` and `minitest-mock` (test) and a `json < 3` pin, because json 3.0 changed
-the signature of `JSON.parse` in a way Active Support 8.1.3 does not handle yet.
+The Gemfile adds five gems to the Rails defaults: `dotenv-rails` (development/test, loads
+`.env`), `webmock` and `minitest-mock` (test), `net-ftp` (Ruby's own FTP client, a bundled gem
+that has to be declared) and a `json < 3` pin, because json 3.0 changed the signature of
+`JSON.parse` in a way Active Support 8.1.3 does not handle yet.
 
 ## Installation
 
@@ -97,6 +99,8 @@ is verified as part of development).
 
 On Windows, run the scripts through Ruby (`ruby bin/setup --skip-server`,
 `ruby bin/rails server`, `ruby bin/rails test`); PowerShell does not execute the shebang line.
+Run `ruby bin/rails db:test:prepare` once before the first `ruby bin/rails test`: Rails prepares
+the test database by invoking `bin/rails` itself, which only works where the shebang line does.
 
 ## Configuration
 
@@ -109,7 +113,7 @@ the first request. In development and test, `dotenv-rails` loads `.env` (ignored
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `SIMPLE_DRIVE_API_TOKEN` | yes | – | The bearer token clients must present. |
-| `STORAGE_BACKEND` | no | `local` | `local`, `database` or `s3`. |
+| `STORAGE_BACKEND` | no | `local` | `local`, `database`, `s3` or `ftp`. |
 | `SIMPLE_DRIVE_MAX_BLOB_BYTES` | no | `10485760` (10 MiB) | Largest accepted blob, in decoded bytes. Also sizes the request body limit. |
 | `LOCAL_STORAGE_PATH` | for `local` | `storage/blobs` | Directory for blob files; relative paths resolve from the application root. |
 | `S3_ENDPOINT` | for `s3` | – | `http(s)://host[:port]` of the S3-compatible service. |
@@ -119,6 +123,12 @@ the first request. In development and test, `dotenv-rails` loads `.env` (ignored
 | `S3_PATH_STYLE` | no | `true` | `true` for `http://host/bucket/key` (MinIO), `false` for `http://bucket.host/key` (AWS default). |
 | `S3_KEY_PREFIX` | no | – | Optional prefix inside the bucket, e.g. `blobs`. Letters, digits, `.`, `_`, `-` and `/`. |
 | `S3_TIMEOUT_SECONDS` | no | `30` | Read/write timeout per S3 request (connect timeout is 5 s). |
+| `FTP_HOST`, `FTP_USERNAME`, `FTP_PASSWORD` | for `ftp` | – | FTP server and account. |
+| `FTP_PORT` | no | `21` | Control connection port. |
+| `FTP_ROOT_PATH` | no | login directory | Directory for blob files on the server; created if missing (one level). |
+| `FTP_PASSIVE` | no | `true` | Passive mode, which works through NAT and container port mappings. |
+| `FTP_TLS` | no | `false` | Explicit FTPS (`AUTH TLS`). |
+| `FTP_TIMEOUT_SECONDS` | no | `30` | Read timeout per FTP operation (connect timeout is 5 s). |
 
 Standard Rails variables also apply in production: `SECRET_KEY_BASE` (or `RAILS_MASTER_KEY`
 for `config/credentials.yml.enc`), `DATABASE_URL` (for example `sqlite3:storage/production.sqlite3`),
@@ -141,7 +151,7 @@ returns no data.
 
 ### Selecting the storage backend
 
-Set `STORAGE_BACKEND` to `local`, `database` or `s3` and provide that backend's variables.
+Set `STORAGE_BACKEND` to `local`, `database`, `s3` or `ftp` and provide that backend's variables.
 `Storage.backend` maps the name to a class and lets the class validate its own settings, so
 an unknown name or a missing S3 credential is reported at boot. Each metadata row records which
 backend stored it; if the configured backend later differs, `GET` answers `503` rather than
@@ -182,6 +192,24 @@ S3_PATH_STYLE=true
 
 For AWS: `S3_ENDPOINT=https://s3.eu-west-1.amazonaws.com`, `S3_REGION=eu-west-1`,
 `S3_PATH_STYLE=false`, plus the bucket and an access key limited to that bucket.
+
+### FTP server (`STORAGE_BACKEND=ftp`, bonus)
+
+`Storage::FtpBackend` uses Ruby's `Net::FTP`. Each object is one file named after its storage
+key inside `FTP_ROOT_PATH` (created on first use when missing). A connection is opened per
+operation, transfers are binary, uploads go to a temporary name and are renamed into place, and
+passive mode is on by default. A `550` reply to a download is reported as "no object" because
+FTP does not distinguish a missing file from an unreadable one. With the server from
+`compose.yaml`:
+
+```dotenv
+STORAGE_BACKEND=ftp
+FTP_HOST=localhost
+FTP_PORT=2121
+FTP_USERNAME=drive
+FTP_PASSWORD=drivepass
+FTP_ROOT_PATH=blobs
+```
 
 ## How the S3 implementation works
 
@@ -235,9 +263,9 @@ SIMPLE_DRIVE_API_TOKEN=change-me STORAGE_BACKEND=local LOCAL_STORAGE_PATH=/srv/s
 $env:SIMPLE_DRIVE_API_TOKEN = "change-me"; ruby bin/rails server
 ```
 
-To try the S3 backend locally, start MinIO first (`docker compose up -d` starts it on port
-9000 and creates the `simple-drive` and `simple-drive-test` buckets) and use the `S3_*` values
-shown above.
+To try the S3 or FTP backend locally, start the servers first: `docker compose up -d` brings
+up MinIO on port 9000 (creating the `simple-drive` and `simple-drive-test` buckets) and an FTP
+server on port 2121 (user `drive`, password `drivepass`); then use the values shown above.
 
 ## Running the tests
 
@@ -251,12 +279,15 @@ The suite (Minitest, `test/`) covers:
   non-negative size, binary round trip in `blob_contents`);
 - `test/support/storage_backend_contract.rb`: the behaviour every backend must share (every
   byte value, empty and large objects, isolation by key, not-found and delete semantics), run
-  against the local, database and S3 backends;
+  against the local, database, S3 and FTP backends;
 - the local backend (directory layout, atomic writes, rejection of non-UUID keys, filesystem
   errors) and the database backend (separate table, error translation);
 - the SigV4 signer against the official AWS example vectors, and the S3 backend against
   stubbed HTTP: request shape, recomputable signatures, both addressing styles, key prefixes,
   binary bodies, 404/403/5xx/redirect handling, timeouts and refused connections;
+- the FTP backend against an in-memory stand-in for `Net::FTP` that answers like a real server
+  (temporary name and rename, root creation, 550 handling, error translation, connection
+  options, credentials kept out of messages);
 - `Blobs::Store` and `Blobs::Retrieve`: strict Base64, type checks, size limits, duplicate ids,
   the race on the unique index and the cleanup that follows, backend failures, backend mismatch;
 - the settings object, the body-size middleware and the exceptions app;
@@ -265,7 +296,7 @@ The suite (Minitest, `test/`) covers:
 
 Static analysis and dependency checks: `bin/rubocop`, `bin/brakeman`, `bin/bundler-audit`, or
 all of them plus the tests with `bin/ci`. The GitHub Actions workflow in `.github/workflows/ci.yml`
-runs the same set and starts MinIO so the S3 integration tests run there too.
+runs the same set and starts MinIO and an FTP server so both integration suites run there too.
 
 ### Running the S3 integration tests
 
@@ -282,6 +313,16 @@ S3_TEST_ACCESS_KEY_ID=minioadmin S3_TEST_SECRET_ACCESS_KEY=minioadmin bin/rails 
 point the same tests at another S3-compatible service. The variables are deliberately distinct
 from the application's `S3_*` variables so that a developer's `.env` can never make the test
 suite talk to a real bucket. The tests write under the `integration-tests/` prefix of the bucket.
+
+### Running the FTP integration tests
+
+Skipped unless `FTP_TEST_HOST` is set. With the server from `compose.yaml`:
+
+```bash
+FTP_TEST_HOST=localhost FTP_TEST_PORT=2121 FTP_TEST_USERNAME=drive FTP_TEST_PASSWORD=drivepass bin/rails test
+```
+
+The tests use the `integration-tests` directory below the account's login directory.
 
 ## API overview
 
@@ -453,5 +494,6 @@ required explicitly because it is needed while the application is still being co
   URLs because the router normalises the path; interior single slashes work unencoded.
 - **Puma on Windows** runs in single-process mode; MinIO's community container images are
   frozen at the pinned release used in `compose.yaml` and CI.
-- **FTP** (bonus backend) is not implemented; the `Storage::Backend` interface is the only thing
-  a `Storage::FtpBackend` would have to implement, and `Storage::BACKENDS` the only registration.
+- **FTP** is plain FTP unless `FTP_TLS` enables explicit FTPS; a `550` reply on download
+  (missing or unreadable file) surfaces as `503` on `GET`, and `FTP_ROOT_PATH` is created one
+  level deep only.
