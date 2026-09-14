@@ -6,14 +6,22 @@ module SimpleDrive
   class ExceptionsApp
     def call(env)
       request = ActionDispatch::Request.new(env)
-      status = request.path_info[1..].to_i
-      status = 500 unless Rack::Utils::HTTP_STATUS_CODES.key?(status)
-
-      code, message = describe(status, request.get_header("action_dispatch.exception"))
+      exception = request.get_header("action_dispatch.exception")
+      status = status_for(request.path_info, exception)
+      code, message = describe(status, exception)
       JsonError.rack_response(status, code, message)
     end
 
     private
+
+    # Rails reports an unparsable Content-Type header as 406; for this API
+    # the accurate and documented answer is 415.
+    def status_for(path_info, exception)
+      return 415 if exception.is_a?(ActionDispatch::Http::MimeNegotiation::InvalidType)
+
+      status = path_info[1..].to_i
+      Rack::Utils::HTTP_STATUS_CODES.key?(status) ? status : 500
+    end
 
     def describe(status, exception)
       case status
@@ -25,6 +33,8 @@ module SimpleDrive
         end
       when 404
         [ "not_found", "No route matches this path" ]
+      when 415
+        [ "unsupported_media_type", "Content-Type must be application/json" ]
       when 500..599
         [ "internal_error", "An unexpected error occurred" ]
       else

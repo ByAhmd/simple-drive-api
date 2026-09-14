@@ -19,6 +19,14 @@ class SimpleDrive::ExceptionsAppTest < ActiveSupport::TestCase
     assert_equal({ "code" => "bad_request", "message" => "The request could not be understood" }, call(400).last)
   end
 
+  test "answers an unparsable Content-Type with the documented 415" do
+    exception = ActionDispatch::Http::MimeNegotiation::InvalidType.new("invalid")
+
+    assert_equal [ 415, "application/json; charset=utf-8",
+                   { "code" => "unsupported_media_type", "message" => "Content-Type must be application/json" } ],
+                 call(406, exception)
+  end
+
   test "describes unknown routes" do
     assert_equal({ "code" => "not_found", "message" => "No route matches this path" }, call(404).last)
   end
