@@ -1,0 +1,33 @@
+# Local S3-compatible storage for development and for the S3 integration
+# tests: `docker compose up -d`. The credentials below are MinIO's well-known
+# defaults for a throwaway local container, not secrets; the matching
+# application settings are listed in .env.example and the README.
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  create-buckets:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "mc alias set local http://minio:9000 minioadmin minioadmin
+      && mc mb --ignore-existing local/simple-drive
+      && mc mb --ignore-existing local/simple-drive-test"
+
+volumes:
+  minio-data:
