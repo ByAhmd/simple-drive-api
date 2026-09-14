@@ -156,6 +156,13 @@ class BlobsApiTest < ActionDispatch::IntegrationTest
     assert_error :unsupported_media_type, "unsupported_media_type", "Content-Type must be application/json"
   end
 
+  test "rejects a malformed content type header with the same 415" do
+    post "/v1/blobs", params: { id: "x", data: HELLO }.to_json,
+                      headers: auth_headers.merge("Content-Type" => "garbage")
+
+    assert_error :unsupported_media_type, "unsupported_media_type", "Content-Type must be application/json"
+  end
+
   test "rejects a blob above the configured size limit" do
     limit = Rails.configuration.x.simple_drive.max_blob_bytes
     post_blob id: "big", data: Base64.strict_encode64("x" * (limit + 1))

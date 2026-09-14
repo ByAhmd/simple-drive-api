@@ -432,8 +432,8 @@ request tests assert the real contract. Programming errors are not rescued; they
 `500` in production and as failures in tests.
 
 **Request size is bounded twice.** `SimpleDrive::RequestBodyLimit` refuses a body whose
-`Content-Length` exceeds the Base64 form of the largest blob (plus room for line breaks, the id
-and JSON syntax) before Rails parses it, answering with the API's JSON shape; Puma's
+`Content-Length` exceeds the Base64 form of the largest blob (plus room for JSON-escaped line
+breaks, the id and JSON syntax) before Rails parses it, answering with the API's JSON shape; Puma's
 `http_content_length_limit` is set to twice that number, so bodies between the two limits still
 get the JSON error while anything larger, or an endless chunked upload, is cut off while it is
 still arriving. Both derive from `SIMPLE_DRIVE_MAX_BLOB_BYTES`.

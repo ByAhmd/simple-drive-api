@@ -68,10 +68,10 @@ class SimpleDrive::SettingsTest < ActiveSupport::TestCase
   end
 
   test "sizes the request body limit for the largest blob in any common Base64 form" do
-    settings = SimpleDrive::Settings.new(VALID.merge(max_blob_bytes: 3000))
-    largest = "x" * 3000
+    settings = SimpleDrive::Settings.new(VALID.merge(max_blob_bytes: 3_000_000))
+    largest = "x" * 3_000_000
 
-    assert_equal settings.max_request_body_bytes, SimpleDrive::Settings.max_request_body_bytes(3000)
+    assert_equal settings.max_request_body_bytes, SimpleDrive::Settings.max_request_body_bytes(3_000_000)
     [ Base64.strict_encode64(largest), Base64.encode64(largest), Base64.encode64(largest).gsub("\n", "\r\n") ].each do |encoded|
       body = { id: "a" * Blob::IDENTIFIER_MAX_LENGTH, data: encoded }.to_json
       assert_operator body.bytesize, :<=, settings.max_request_body_bytes

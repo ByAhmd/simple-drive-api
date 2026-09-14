@@ -12,12 +12,13 @@ module SimpleDrive
 
     # Largest request body worth reading for a given blob size limit: the
     # Base64 form of the largest accepted blob (4 bytes per 3, rounded up),
-    # room for MIME-style line breaks (CRLF every 60 characters, the densest
-    # common wrapping), and room for the identifier and the JSON syntax.
-    # Shared with config/puma.rb, which enforces a hard cap at the server.
+    # room for MIME-style line breaks (a CRLF every 60 characters, the densest
+    # common wrapping, is four bytes once JSON-escaped), and room for the
+    # identifier and the JSON syntax. Shared with config/puma.rb, which
+    # enforces a hard cap at the server.
     def self.max_request_body_bytes(max_blob_bytes)
       encoded = (max_blob_bytes + 2) / 3 * 4
-      encoded + encoded / 30 + 16 * 1024
+      encoded + encoded / 15 + 16 * 1024
     end
 
     # Optional settings reach the backends as strings from the environment;
