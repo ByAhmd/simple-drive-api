@@ -77,6 +77,12 @@ jobs:
           docker run --rm --network host quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
             sh -c "mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing local/simple-drive-test"
 
+      - name: Start an FTP server
+        run: |
+          docker run -d --name ftp -p 2121:21 -p 21000-21010:21000-21010 \
+            -e USERS="drive|drivepass|/ftp/drive" -e ADDRESS=localhost -e MIN_PORT=21000 -e MAX_PORT=21010 \
+            delfer/alpine-ftp-server:latest
+
       - name: Run tests
         env:
           RAILS_ENV: test
@@ -84,4 +90,8 @@ jobs:
           S3_TEST_BUCKET: simple-drive-test
           S3_TEST_ACCESS_KEY_ID: minioadmin
           S3_TEST_SECRET_ACCESS_KEY: minioadmin
+          FTP_TEST_HOST: localhost
+          FTP_TEST_PORT: "2121"
+          FTP_TEST_USERNAME: drive
+          FTP_TEST_PASSWORD: drivepass
         run: bin/rails db:test:prepare test

@@ -22,6 +22,16 @@ shared:
     key_prefix: <%= ENV["S3_KEY_PREFIX"].to_json %>
     timeout_seconds: <%= ENV.fetch("S3_TIMEOUT_SECONDS", 30) %>
 
+  ftp:
+    host: <%= ENV["FTP_HOST"].to_json %>
+    port: <%= ENV.fetch("FTP_PORT", 21) %>
+    username: <%= ENV["FTP_USERNAME"].to_json %>
+    password: <%= ENV["FTP_PASSWORD"].to_json %>
+    root: <%= ENV["FTP_ROOT_PATH"].to_json %>
+    passive: <%= ENV.fetch("FTP_PASSIVE", "true").to_json %>
+    tls: <%= ENV.fetch("FTP_TLS", "false").to_json %>
+    timeout_seconds: <%= ENV.fetch("FTP_TIMEOUT_SECONDS", 30) %>
+
 test:
   api_token: test-token
   storage_backend: local

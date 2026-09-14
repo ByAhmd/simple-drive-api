@@ -20,9 +20,15 @@ class StorageTest < ActiveSupport::TestCase
     assert_instance_of Storage::S3Backend, Storage.backend(settings("s3", s3: s3))
   end
 
+  test "builds the FTP backend from its settings section" do
+    ftp = { host: "ftp.example.test", username: "u", password: "p", root: "blobs" }
+
+    assert_instance_of Storage::FtpBackend, Storage.backend(settings("ftp", ftp: ftp))
+  end
+
   test "rejects an unknown backend name" do
-    error = assert_raises(SimpleDrive::ConfigurationError) { Storage.backend(settings("ftp")) }
-    assert_match(/STORAGE_BACKEND is "ftp"; expected one of: local, database, s3/, error.message)
+    error = assert_raises(SimpleDrive::ConfigurationError) { Storage.backend(settings("gcs")) }
+    assert_match(/STORAGE_BACKEND is "gcs"; expected one of: local, database, s3, ftp/, error.message)
   end
 
   test "reports which backend setting is missing" do
