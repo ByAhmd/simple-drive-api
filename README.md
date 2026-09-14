@@ -93,9 +93,8 @@ cp .env.example .env        # then set SIMPLE_DRIVE_API_TOKEN
 bin/rails db:prepare
 ```
 
-The schema is created from `db/schema.rb` by `db:prepare` on a fresh database; the
-migrations in `db/migrate` produce the same schema (`bin/rails db:drop db:create db:migrate`
-is verified as part of development).
+The schema is created from `db/schema.rb` by `db:prepare` on a fresh database; running the
+migrations in `db/migrate` against an empty database produces the same schema.
 
 On Windows, run the scripts through Ruby (`ruby bin/setup --skip-server`,
 `ruby bin/rails server`, `ruby bin/rails test`); PowerShell does not execute the shebang line.

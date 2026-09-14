@@ -4,8 +4,9 @@ source "https://rubygems.org"
 gem "rails", "~> 8.1.3", ">= 8.1.3.1"
 # Use sqlite3 as the database for Active Record
 gem "sqlite3", ">= 2.1"
-# Use the Puma web server [https://github.com/puma/puma]
-gem "puma", ">= 5.0"
+# Use the Puma web server [https://github.com/puma/puma]; 6.1 added the
+# http_content_length_limit setting used in config/puma.rb
+gem "puma", ">= 6.1"
 
 # Ruby's FTP client, used by the FTP storage backend; a bundled gem since
 # Ruby 3.1, so it has to be declared to be loadable under Bundler
