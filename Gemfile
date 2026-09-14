@@ -14,7 +14,7 @@ gem "net-ftp"
 
 # json 3.0 made JSON.parse's options keyword-only, which Active Support 8.1.3
 # does not pass yet; every JSON request body would fail to parse.
-gem "json", "< 3"
+gem "json", "< 4"
 
 # Use Active Model has_secure_password [https://guides.rubyonrails.org/active_model_basics.html#securepassword]
 # gem "bcrypt", "~> 3.1.7"
