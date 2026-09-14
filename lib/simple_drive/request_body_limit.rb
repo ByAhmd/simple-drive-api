@@ -1,10 +1,10 @@
 module SimpleDrive
-  # Refuses request bodies whose declared Content-Length is above the limit
-  # before Rails reads them. Rails parses JSON parameters while it logs the
-  # request, ahead of any controller callback, so this middleware is the only
-  # place an oversized body can be rejected without buffering and decoding it
-  # first. Bodies sent without a Content-Length are still bounded by the
-  # decoded-size check in Blobs::Store.
+  # Refuses request bodies whose Content-Length is above the limit before
+  # Rails reads them. Rails parses JSON parameters while it logs the request,
+  # ahead of any controller callback, so this middleware is the only place an
+  # oversized body can be rejected without decoding it first. Puma de-chunks
+  # chunked uploads and sets Content-Length before the app runs, so they are
+  # covered too; the decoded-size check in Blobs::Store applies regardless.
   class RequestBodyLimit
     def initialize(app, max_bytes:)
       @app = app

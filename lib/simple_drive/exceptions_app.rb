@@ -7,19 +7,23 @@ module SimpleDrive
     def call(env)
       request = ActionDispatch::Request.new(env)
       exception = request.get_header("action_dispatch.exception")
-      status = status_for(request.path_info, exception)
+      status = status_for(request, exception)
       code, message = describe(status, exception)
       JsonError.rack_response(status, code, message)
     end
 
     private
 
-    # Rails reports an unparsable Content-Type header as 406; for this API
-    # the accurate and documented answer is 415.
-    def status_for(path_info, exception)
-      return 415 if exception.is_a?(ActionDispatch::Http::MimeNegotiation::InvalidType)
+    # Rails reports an unparsable Content-Type or Accept header as 406, and
+    # before calling this app replaces whichever header failed to parse with
+    # "text/html". A bad Content-Type is answered 415; a bad Accept keeps 406.
+    def status_for(request, exception)
+      if exception.is_a?(ActionDispatch::Http::MimeNegotiation::InvalidType) &&
+         request.get_header("CONTENT_TYPE") == "text/html"
+        return 415
+      end
 
-      status = path_info[1..].to_i
+      status = request.path_info[1..].to_i
       Rack::Utils::HTTP_STATUS_CODES.key?(status) ? status : 500
     end
 

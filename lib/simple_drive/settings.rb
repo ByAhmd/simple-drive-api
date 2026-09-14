@@ -1,4 +1,8 @@
 module SimpleDrive
+  # Raised while booting when a required setting is missing or malformed.
+  # Defined here because config/puma.rb loads this file on its own.
+  class ConfigurationError < StandardError; end
+
   # Typed view of config/simple_drive.yml, built once in config/application.rb.
   # Values are checked here so that a misconfigured deployment fails while
   # booting rather than on its first request.
@@ -21,8 +25,10 @@ module SimpleDrive
       encoded + encoded / 15 + 16 * 1024
     end
 
-    # Optional settings reach the backends as strings from the environment;
-    # blank means "use the default" and anything unparsable stops the boot.
+    # Settings reach the application as strings from the environment. Blank
+    # means "use the default" (pass default: nil to require a value), and
+    # anything unparsable stops the boot. Plain Ruby, because config/puma.rb
+    # calls these before Rails is loaded.
     def self.boolean(value, env_name, default:)
       return default if value.to_s.strip.empty?
 
@@ -33,10 +39,14 @@ module SimpleDrive
       end
     end
 
-    def self.integer(value, env_name, default:)
-      return default if value.to_s.strip.empty?
+    def self.positive_integer(value, env_name, default:)
+      return default if value.to_s.strip.empty? && default
 
-      Integer(value.to_s, exception: false) || raise(ConfigurationError, "#{env_name} must be an integer")
+      # Base 10 explicitly: Integer() alone would read "021" as octal 17.
+      parsed = Integer(value.to_s.strip, 10, exception: false)
+      raise ConfigurationError, "#{env_name} must be a positive integer" unless parsed&.positive?
+
+      parsed
     end
 
     attr_reader :api_token, :storage_backend, :max_blob_bytes
@@ -49,7 +59,7 @@ module SimpleDrive
       end
 
       @storage_backend = required_string(options, :storage_backend, "STORAGE_BACKEND")
-      @max_blob_bytes = positive_integer(options, :max_blob_bytes, "SIMPLE_DRIVE_MAX_BLOB_BYTES")
+      @max_blob_bytes = self.class.positive_integer(options[:max_blob_bytes], "SIMPLE_DRIVE_MAX_BLOB_BYTES", default: nil)
       @backend_settings = options.except(*TOP_LEVEL_KEYS).transform_values { |section| section.to_h.symbolize_keys }
       freeze
     end
@@ -68,13 +78,6 @@ module SimpleDrive
     def required_string(options, key, env_name)
       value = options[key].to_s.strip
       raise ConfigurationError, "#{env_name} must be set" if value.empty?
-
-      value
-    end
-
-    def positive_integer(options, key, env_name)
-      value = Integer(options[key].to_s, exception: false)
-      raise ConfigurationError, "#{env_name} must be a positive integer" unless value&.positive?
 
       value
     end

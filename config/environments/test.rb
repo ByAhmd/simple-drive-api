@@ -18,9 +18,8 @@ Rails.application.configure do
   # Configure public file server for tests with cache-control for performance.
   config.public_file_server.headers = { "cache-control" => "public, max-age=3600" }
 
-  # Render errors the way production does (through config.exceptions_app) so
-  # that request tests see the JSON clients will get, instead of the
-  # development debug output.
+  # Render errors through config.exceptions_app, as in production, so that
+  # request tests see the JSON clients get instead of Rails' debug output.
   config.consider_all_requests_local = false
   config.cache_store = :null_store
 

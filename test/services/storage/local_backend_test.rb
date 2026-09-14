@@ -51,6 +51,17 @@ class Storage::LocalBackendTest < ActiveSupport::TestCase
     assert_empty Dir.glob(@root.join("**/*.tmp"))
   end
 
+  test "a write that fails before the rename leaves neither the object nor a temporary file" do
+    key = Storage::Backend.generate_key
+
+    File.stub(:rename, ->(*) { raise Errno::EACCES, "rename" }) do
+      assert_raises(Storage::Error) { backend.write(key, "partial".b) }
+    end
+
+    assert_raises(Storage::NotFound) { backend.read(key) }
+    assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
+  end
+
   test "rejects keys that are not application-generated" do
     [ "../../etc/passwd", "..\\..\\secret", "/etc/passwd", "plain-name", "", nil,
       "#{Storage::Backend.generate_key}/../x" ].each do |key|

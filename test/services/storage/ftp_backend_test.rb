@@ -121,6 +121,41 @@ class Storage::FtpBackendTest < ActiveSupport::TestCase
     end
   end
 
+  test "reports permanent errors other than 550 as storage failures, not as a missing file" do
+    @server.define_singleton_method(:getbinaryfile) { |*| raise Net::FTPPermError, "530 Not logged in." }
+    @server.define_singleton_method(:delete) { |*| raise Net::FTPPermError, "502 Command not implemented." }
+
+    with_fake_server do
+      read_error = assert_raises(Storage::Error) { @backend.read(@key) }
+      assert_not_kind_of Storage::NotFound, read_error
+      assert_match(/530 Not logged in/, read_error.message)
+
+      delete_error = assert_raises(Storage::Error) { @backend.delete(@key) }
+      assert_match(/502 Command not implemented/, delete_error.message)
+    end
+  end
+
+  test "carries on when another upload creates the root directory at the same moment" do
+    directories = @server.directories
+    @server.define_singleton_method(:mkdir) do |dir|
+      directories << "/#{dir}"
+      raise Net::FTPPermError, "550 Create directory operation failed."
+    end
+
+    with_fake_server { @backend.write(@key, "raced".b) }
+
+    assert_equal({ "/blobs/#{@key}" => "raced" }, @server.files)
+  end
+
+  test "reports a root directory that cannot be created" do
+    @server.define_singleton_method(:mkdir) { |*| raise Net::FTPPermError, "550 Permission denied." }
+
+    with_fake_server do
+      assert_raises(Storage::Error) { @backend.write(@key, "x".b) }
+    end
+    assert_empty @server.files
+  end
+
   test "delete removes the file" do
     with_fake_server do
       @backend.write(@key, "gone".b)
@@ -167,6 +202,7 @@ class Storage::FtpBackendTest < ActiveSupport::TestCase
     with_fake_server do
       assert_raises(ArgumentError) { @backend.write("../etc/passwd", "x".b) }
       assert_raises(ArgumentError) { @backend.read("../other") }
+      assert_raises(ArgumentError) { @backend.delete("../other") }
     end
 
     assert_empty @sessions
@@ -176,6 +212,14 @@ class Storage::FtpBackendTest < ActiveSupport::TestCase
     { host: "FTP_HOST", username: "FTP_USERNAME", password: "FTP_PASSWORD" }.each do |setting, env_name|
       error = assert_raises(SimpleDrive::ConfigurationError) { Storage::FtpBackend.new(**SETTINGS, setting => "") }
       assert_match(/#{env_name} must be set/, error.message)
+    end
+  end
+
+  test "rejects ports outside 1-65535 and non-positive timeouts" do
+    [ { port: "0" }, { port: "70000" }, { port: "-21" }, { timeout_seconds: "0" }, { timeout_seconds: "-3" } ].each do |setting|
+      assert_raises(SimpleDrive::ConfigurationError, "expected #{setting} to be rejected") do
+        Storage::FtpBackend.from_settings(SETTINGS.merge(setting))
+      end
     end
   end
 

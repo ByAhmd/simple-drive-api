@@ -17,9 +17,16 @@ class BlobTest < ActiveSupport::TestCase
     assert_includes blob.errors.full_messages, "id can't be blank"
   end
 
-  test "limits the identifier length" do
-    assert_predicate build(identifier: "a" * Blob::IDENTIFIER_MAX_LENGTH), :valid?
-    assert_not build(identifier: "a" * (Blob::IDENTIFIER_MAX_LENGTH + 1)).valid?
+  test "limits the identifier to 1024 bytes, however many characters that is" do
+    assert_predicate build(identifier: "a" * 1024), :valid?
+    assert_predicate build(identifier: "€" * 341), :valid?
+
+    [ "a" * 1025, "€" * 342, "😀" * 257 ].each do |identifier|
+      blob = build(identifier: identifier)
+
+      assert_not blob.valid?, "expected #{identifier.bytesize} bytes to be rejected"
+      assert_includes blob.errors.full_messages, "id is too long (maximum is 1024 bytes)"
+    end
   end
 
   test "rejects control characters in the identifier" do

@@ -1,8 +1,8 @@
 require "test_helper"
 
 class SimpleDrive::ExceptionsAppTest < ActiveSupport::TestCase
-  def call(status, exception = nil)
-    env = Rack::MockRequest.env_for("/#{status}")
+  def call(status, exception = nil, headers = {})
+    env = Rack::MockRequest.env_for("/#{status}", headers)
     env["action_dispatch.exception"] = exception
     code, headers, body = SimpleDrive::ExceptionsApp.new.call(env)
     [ code, headers["content-type"], JSON.parse(body.join)["error"] ]
@@ -19,12 +19,21 @@ class SimpleDrive::ExceptionsAppTest < ActiveSupport::TestCase
     assert_equal({ "code" => "bad_request", "message" => "The request could not be understood" }, call(400).last)
   end
 
+  # Rails' ShowExceptions replaces the header that failed to parse with
+  # text/html before it calls the exceptions app; these tests set up that env.
   test "answers an unparsable Content-Type with the documented 415" do
     exception = ActionDispatch::Http::MimeNegotiation::InvalidType.new("invalid")
 
     assert_equal [ 415, "application/json; charset=utf-8",
                    { "code" => "unsupported_media_type", "message" => "Content-Type must be application/json" } ],
-                 call(406, exception)
+                 call(406, exception, "CONTENT_TYPE" => "text/html")
+  end
+
+  test "keeps 406 for an unparsable Accept header" do
+    exception = ActionDispatch::Http::MimeNegotiation::InvalidType.new("invalid")
+
+    assert_equal [ 406, "application/json; charset=utf-8", { "code" => "not_acceptable", "message" => "Not Acceptable" } ],
+                 call(406, exception, "HTTP_ACCEPT" => "text/html")
   end
 
   test "describes unknown routes" do

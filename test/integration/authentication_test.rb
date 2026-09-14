@@ -20,7 +20,8 @@ class AuthenticationTest < ActionDispatch::IntegrationTest
   end
 
   test "other authentication schemes are rejected" do
-    [ "Token token=\"#{api_token}\"", "Basic #{Base64.strict_encode64("user:#{api_token}")}", api_token,
+    [ "Token #{api_token}", "Basic #{api_token}", "Token token=\"#{api_token}\"",
+      "Basic #{Base64.strict_encode64("user:#{api_token}")}", api_token,
       "Bearer", "Bearer ", "Bearer #{api_token} trailing", "Bearer #{api_token}\n" ].each do |authorization|
       get "/v1/blobs/anything", headers: { "Authorization" => authorization }
 
@@ -42,15 +43,18 @@ class AuthenticationTest < ActionDispatch::IntegrationTest
   end
 
   test "authentication is checked before the request body is inspected" do
-    post "/v1/blobs", params: "{not json", headers: { "Content-Type" => "application/json" }
+    post "/v1/blobs", params: +"{not json", headers: { "Content-Type" => "application/json" }
 
     assert_unauthorized
   end
 
-  test "the health check is the only unauthenticated endpoint" do
-    get "/up"
+  test "there is no unauthenticated endpoint serving data, not even a health check" do
+    [ "/up", "/" ].each do |path|
+      get path
 
-    assert_response :ok
+      assert_response :not_found
+      assert_equal({ "error" => { "code" => "not_found", "message" => "No route matches this path" } }, response.parsed_body)
+    end
   end
 
   private

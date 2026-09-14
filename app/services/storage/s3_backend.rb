@@ -26,7 +26,7 @@ module Storage
         **settings.slice(*REQUIRED_SETTINGS.keys),
         path_style: SimpleDrive::Settings.boolean(settings[:path_style], "S3_PATH_STYLE", default: true),
         key_prefix: settings[:key_prefix],
-        timeout: SimpleDrive::Settings.integer(settings[:timeout_seconds], "S3_TIMEOUT_SECONDS", default: 30)
+        timeout: SimpleDrive::Settings.positive_integer(settings[:timeout_seconds], "S3_TIMEOUT_SECONDS", default: 30)
       )
     end
 
@@ -57,7 +57,8 @@ module Storage
       response = client.get_object(object_key(key))
       case response
       when Net::HTTPSuccess
-        response.body.to_s
+        # Net::HTTP tags ASCII-only bodies as UTF-8; blobs are always binary.
+        response.body.to_s.b
       when Net::HTTPNotFound
         raise NotFound, "no object stored under key #{key}" if error_code(response) == "NoSuchKey"
 

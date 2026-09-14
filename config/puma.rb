@@ -37,7 +37,8 @@ port ENV.fetch("PORT", 3000)
 # by SimpleDrive::RequestBodyLimit with the API's JSON error shape, anything
 # beyond that is not worth reading at all.
 require_relative "../lib/simple_drive/settings"
-max_blob_bytes = Integer(ENV.fetch("SIMPLE_DRIVE_MAX_BLOB_BYTES", SimpleDrive::Settings::DEFAULT_MAX_BLOB_BYTES))
+max_blob_bytes = SimpleDrive::Settings.positive_integer(ENV["SIMPLE_DRIVE_MAX_BLOB_BYTES"], "SIMPLE_DRIVE_MAX_BLOB_BYTES",
+                                                        default: SimpleDrive::Settings::DEFAULT_MAX_BLOB_BYTES)
 http_content_length_limit 2 * SimpleDrive::Settings.max_request_body_bytes(max_blob_bytes)
 
 # Allow puma to be restarted by `bin/rails restart` command.

@@ -138,14 +138,28 @@ class BlobsApiTest < ActionDispatch::IntegrationTest
 
   test "rejects an identifier that is too long or contains control characters" do
     post_blob id: "a" * 1025, data: HELLO
-    assert_error :unprocessable_content, "validation_failed", "id is too long (maximum is 1024 characters)"
+    assert_error :unprocessable_content, "validation_failed", "id is too long (maximum is 1024 bytes)"
+
+    post_blob id: "€" * 342, data: HELLO
+    assert_error :unprocessable_content, "validation_failed", "id is too long (maximum is 1024 bytes)"
 
     post_blob id: "tab\there", data: HELLO
     assert_error :unprocessable_content, "validation_failed", "id must not contain control characters"
   end
 
+  test "accepts the longest multi-byte identifier and serves it back through its encoded path" do
+    id = "€" * 341 # 1023 bytes, 3069 once percent-encoded
+    post_blob id: id, data: HELLO
+    assert_response :created
+
+    get "/v1/blobs/#{ERB::Util.url_encode(id)}", headers: auth_headers
+
+    assert_response :ok
+    assert_equal id, response.parsed_body["id"]
+  end
+
   test "rejects a body that is not JSON" do
-    post "/v1/blobs", params: "{\"id\": \"x\", \"data\": ", headers: json_headers
+    post "/v1/blobs", params: +"{\"id\": \"x\", \"data\": ", headers: json_headers
 
     assert_error :bad_request, "invalid_json", "Request body is not valid JSON"
   end
@@ -161,6 +175,12 @@ class BlobsApiTest < ActionDispatch::IntegrationTest
                       headers: auth_headers.merge("Content-Type" => "garbage")
 
     assert_error :unsupported_media_type, "unsupported_media_type", "Content-Type must be application/json"
+  end
+
+  test "answers a malformed Accept header with 406, not with a content type error" do
+    get "/v1/blobs/missing", headers: auth_headers.merge("Accept" => "application")
+
+    assert_error :not_acceptable, "not_acceptable", "Not Acceptable"
   end
 
   test "rejects a blob above the configured size limit" do

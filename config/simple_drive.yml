@@ -1,36 +1,38 @@
 # Application settings, loaded by config/application.rb via config_for.
 #
 # Every value comes from the environment so that nothing secret lives in the
-# repository; .env.example lists the variables. String values are rendered
-# with to_json so that tokens, secrets and Windows paths containing YAML
-# special characters (":", "#", "\") survive parsing unchanged.
+# repository; .env.example lists the variables. Values are rendered with
+# to_json so that YAML never reinterprets them: tokens, secrets and Windows
+# paths containing ":", "#" or "\" survive unchanged, and numbers are checked
+# by SimpleDrive::Settings rather than by YAML's integer rules. A variable
+# that is set but empty gets the same default as one that is unset.
 shared:
   api_token: <%= ENV["SIMPLE_DRIVE_API_TOKEN"].to_json %>
-  storage_backend: <%= ENV.fetch("STORAGE_BACKEND", "local").to_json %>
-  max_blob_bytes: <%= ENV.fetch("SIMPLE_DRIVE_MAX_BLOB_BYTES", SimpleDrive::Settings::DEFAULT_MAX_BLOB_BYTES) %>
+  storage_backend: <%= (ENV["STORAGE_BACKEND"].presence || "local").to_json %>
+  max_blob_bytes: <%= (ENV["SIMPLE_DRIVE_MAX_BLOB_BYTES"].presence || SimpleDrive::Settings::DEFAULT_MAX_BLOB_BYTES).to_s.to_json %>
 
   local:
-    root: <%= ENV.fetch("LOCAL_STORAGE_PATH", "storage/blobs").to_json %>
+    root: <%= (ENV["LOCAL_STORAGE_PATH"].presence || "storage/blobs").to_json %>
 
   s3:
     endpoint: <%= ENV["S3_ENDPOINT"].to_json %>
-    region: <%= ENV.fetch("S3_REGION", "us-east-1").to_json %>
+    region: <%= (ENV["S3_REGION"].presence || "us-east-1").to_json %>
     bucket: <%= ENV["S3_BUCKET"].to_json %>
     access_key_id: <%= ENV["S3_ACCESS_KEY_ID"].to_json %>
     secret_access_key: <%= ENV["S3_SECRET_ACCESS_KEY"].to_json %>
-    path_style: <%= ENV.fetch("S3_PATH_STYLE", "true").to_json %>
+    path_style: <%= ENV["S3_PATH_STYLE"].to_json %>
     key_prefix: <%= ENV["S3_KEY_PREFIX"].to_json %>
-    timeout_seconds: <%= ENV.fetch("S3_TIMEOUT_SECONDS", 30) %>
+    timeout_seconds: <%= ENV["S3_TIMEOUT_SECONDS"].to_json %>
 
   ftp:
     host: <%= ENV["FTP_HOST"].to_json %>
-    port: <%= ENV.fetch("FTP_PORT", 21) %>
+    port: <%= ENV["FTP_PORT"].to_json %>
     username: <%= ENV["FTP_USERNAME"].to_json %>
     password: <%= ENV["FTP_PASSWORD"].to_json %>
     root: <%= ENV["FTP_ROOT_PATH"].to_json %>
-    passive: <%= ENV.fetch("FTP_PASSIVE", "true").to_json %>
-    tls: <%= ENV.fetch("FTP_TLS", "false").to_json %>
-    timeout_seconds: <%= ENV.fetch("FTP_TIMEOUT_SECONDS", 30) %>
+    passive: <%= ENV["FTP_PASSIVE"].to_json %>
+    tls: <%= ENV["FTP_TLS"].to_json %>
+    timeout_seconds: <%= ENV["FTP_TIMEOUT_SECONDS"].to_json %>
 
 test:
   api_token: test-token

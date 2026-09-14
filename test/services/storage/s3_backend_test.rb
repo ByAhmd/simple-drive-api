@@ -29,7 +29,7 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
     data = "hello\x00\xFFworld".b
     stub = stub_request(:put, @object_url).with(
       body: data,
-      headers: { "Content-Type" => "application/octet-stream", "Host" => "s3.example.test:9000",
+      headers: { "Content-Type" => "application/octet-stream", "Host" => "s3.example.test:9000", "Accept-Encoding" => "identity",
                  "X-Amz-Content-Sha256" => Digest::SHA256.hexdigest(data),
                  "X-Amz-Date" => /\A\d{8}T\d{6}Z\z/,
                  "Authorization" => %r{\AAWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/\d{8}/eu-central-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=\h{64}\z} }
@@ -142,26 +142,17 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
   end
 
   test "treats a body shorter than its Content-Length as a failure, not as a short blob" do
-    server = TCPServer.new("127.0.0.1", 0)
-    port = server.addr[1]
-    # Net::HTTP retries an idempotent request once, so answer two connections.
-    thread = Thread.new do
-      2.times do
-        socket = server.accept
-        socket.readpartial(4096)
-        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort")
-        socket.close
-      end
+    with_raw_response("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort") do |backend|
+      error = assert_raises(Storage::Error) { backend.read(@key) }
+      assert_match(/EOFError/, error.message)
     end
-    WebMock.disable_net_connect!(allow: "127.0.0.1:#{port}")
-    backend = Storage::S3Backend.new(**SETTINGS, endpoint: "http://127.0.0.1:#{port}")
+  end
 
-    error = assert_raises(Storage::Error) { backend.read(@key) }
-    assert_match(/EOFError/, error.message)
-  ensure
-    WebMock.disable_net_connect!
-    server&.close
-    thread&.join(5)
+  test "treats a malformed response header as a storage error" do
+    with_raw_response("HTTP/1.1 200 OK\r\nContent-Length: lots\r\nConnection: close\r\n\r\nbody") do |backend|
+      error = assert_raises(Storage::Error) { backend.read(@key) }
+      assert_match(/HTTPHeaderSyntaxError/, error.message)
+    end
   end
 
   test "timeouts become storage errors" do
@@ -217,7 +208,30 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
     assert_equal "d", backend.read(@key)
     assert_requested stub
     assert_raises(SimpleDrive::ConfigurationError) { Storage::S3Backend.from_settings(SETTINGS.merge(path_style: "maybe")) }
-    assert_raises(SimpleDrive::ConfigurationError) { Storage::S3Backend.from_settings(SETTINGS.merge(timeout_seconds: "soon")) }
+    [ "soon", "0", "-5" ].each do |timeout|
+      assert_raises(SimpleDrive::ConfigurationError) { Storage::S3Backend.from_settings(SETTINGS.merge(timeout_seconds: timeout)) }
+    end
+  end
+
+  test "accepts an endpoint with a trailing slash" do
+    backend = Storage::S3Backend.new(**SETTINGS, endpoint: "http://s3.example.test:9000/")
+    stub = stub_request(:get, @object_url).to_return(status: 200, body: "t")
+
+    assert_equal "t", backend.read(@key)
+    assert_requested stub
+  end
+
+  test "applies the configured timeouts and never retries a request" do
+    backend = Storage::S3Backend.from_settings(SETTINGS.merge(timeout_seconds: "7"))
+    stub_request(:get, @object_url).to_return(status: 200, body: "v")
+    connections = []
+    build_connection = Net::HTTP.method(:new)
+
+    Net::HTTP.stub(:new, ->(*args) { build_connection.call(*args).tap { |http| connections << http } }) do
+      backend.read(@key)
+    end
+
+    assert_equal [ [ 5, 7, 7, 0 ] ], connections.map { |http| [ http.open_timeout, http.read_timeout, http.write_timeout, http.max_retries ] }
   end
 
   test "requires an http(s) endpoint" do
@@ -234,6 +248,24 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
   end
 
   private
+
+  # Serves one connection with a canned HTTP response, for the malformed
+  # replies WebMock cannot produce.
+  def with_raw_response(raw)
+    server = TCPServer.new("127.0.0.1", 0)
+    thread = Thread.new do
+      socket = server.accept
+      socket.readpartial(4096)
+      socket.write(raw)
+      socket.close
+    end
+    WebMock.disable_net_connect!(allow: "127.0.0.1:#{server.addr[1]}")
+    yield Storage::S3Backend.new(**SETTINGS, endpoint: "http://127.0.0.1:#{server.addr[1]}")
+  ensure
+    WebMock.disable_net_connect!
+    server&.close
+    thread&.join(5)
+  end
 
   def s3_error(code)
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>#{code}</Code><Message>msg</Message></Error>"

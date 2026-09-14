@@ -10,12 +10,13 @@ module Storage
     # Supports path-style addressing (http://host/bucket/key, what MinIO and
     # most self-hosted services expect) and virtual-hosted-style addressing
     # (http://bucket.host/key, the AWS default). A new connection is opened
-    # per request; the transport errors listed below become Storage::Error.
+    # per request and nothing is retried, so S3_TIMEOUT_SECONDS bounds each
+    # operation; the transport errors listed below become Storage::Error.
     class Client
       OPEN_TIMEOUT = 5
       NETWORK_ERRORS = [
         Timeout::Error, SocketError, SystemCallError, EOFError, IOError,
-        OpenSSL::SSL::SSLError, Net::ProtocolError, Net::HTTPBadResponse
+        OpenSSL::SSL::SSLError, Net::ProtocolError, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError
       ].freeze
 
       def initialize(endpoint:, bucket:, access_key_id:, secret_access_key:, region:, path_style:, timeout:)
@@ -65,6 +66,9 @@ module Storage
         request["authorization"] = @signer.authorization(
           method: request.method, path: uri.path, headers: signed_headers, payload_hash: payload_hash
         )
+        # Ask for the stored bytes as they are: no compression to negotiate,
+        # inflate or get wrong. Unsigned, which SigV4 allows.
+        request["accept-encoding"] = "identity"
         request.body = body unless body.nil?
 
         connection(uri).start { |http| http.request(request) }
@@ -101,9 +105,9 @@ module Storage
         # A body cut short of its Content-Length must be an error, not a
         # truncated blob returned as if it were complete.
         http.ignore_eof = false
-        # Net::HTTP's single retry on a dropped connection is safe here: every
-        # operation is idempotent because keys are never reused.
-        http.max_retries = 1
+        # Net::HTTP would otherwise resend a timed-out request, doubling the
+        # configured timeout and re-uploading the whole body.
+        http.max_retries = 0
         http
       end
     end

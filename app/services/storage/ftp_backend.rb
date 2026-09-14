@@ -16,13 +16,13 @@ module Storage
     def self.from_settings(settings)
       new(
         host: settings[:host],
-        port: SimpleDrive::Settings.integer(settings[:port], "FTP_PORT", default: 21),
+        port: SimpleDrive::Settings.positive_integer(settings[:port], "FTP_PORT", default: 21),
         username: settings[:username],
         password: settings[:password],
         root: settings[:root],
         passive: SimpleDrive::Settings.boolean(settings[:passive], "FTP_PASSIVE", default: true),
         tls: SimpleDrive::Settings.boolean(settings[:tls], "FTP_TLS", default: false),
-        timeout: SimpleDrive::Settings.integer(settings[:timeout_seconds], "FTP_TIMEOUT_SECONDS", default: 30)
+        timeout: SimpleDrive::Settings.positive_integer(settings[:timeout_seconds], "FTP_TIMEOUT_SECONDS", default: 30)
       )
     end
 
@@ -30,6 +30,7 @@ module Storage
       { "FTP_HOST" => host, "FTP_USERNAME" => username, "FTP_PASSWORD" => password }.each do |env_name, value|
         raise SimpleDrive::ConfigurationError, "#{env_name} must be set" if value.blank?
       end
+      raise SimpleDrive::ConfigurationError, "FTP_PORT must be between 1 and 65535" unless (1..65_535).cover?(port)
 
       @host = host
       @root = root.to_s.delete_suffix("/")
@@ -53,9 +54,12 @@ module Storage
       validate_key!(key)
       session do |ftp|
         ftp.getbinaryfile(key, nil)
-      rescue Net::FTPPermError
+      rescue Net::FTPPermError => e
         # 550 is the server's answer both for a missing file and for one it
-        # refuses to serve; either way there is no object to return.
+        # refuses to serve; either way there is no object to return. Any other
+        # permanent error is a real failure and is reported as one.
+        raise unless file_unavailable?(e)
+
         raise NotFound, "no object stored under key #{key}"
       end
     end
@@ -64,8 +68,8 @@ module Storage
       validate_key!(key)
       session do |ftp|
         ftp.delete(key)
-      rescue Net::FTPPermError
-        nil
+      rescue Net::FTPPermError => e
+        raise unless file_unavailable?(e)
       end
     end
 
@@ -87,8 +91,20 @@ module Storage
 
       ftp.chdir(@root)
     rescue Net::FTPPermError
-      ftp.mkdir(@root)
+      create_root(ftp)
       ftp.chdir(@root)
+    end
+
+    # A concurrent first upload can create the directory between the failed
+    # chdir and this mkdir; the chdir that follows decides whether it exists.
+    def create_root(ftp)
+      ftp.mkdir(@root)
+    rescue Net::FTPPermError => e
+      raise unless file_unavailable?(e)
+    end
+
+    def file_unavailable?(error)
+      error.message.start_with?("550")
     end
   end
 end

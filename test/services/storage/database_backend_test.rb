@@ -27,10 +27,22 @@ class Storage::DatabaseBackendTest < ActiveSupport::TestCase
     assert_difference("BlobContent.count", -1) { backend.delete(key) }
   end
 
-  test "translates database errors into storage errors" do
+  test "translates database errors on write into storage errors" do
     key = Storage::Backend.generate_key
     backend.write(key, "first".b)
 
     assert_raises(Storage::Error) { backend.write(key, "second".b) }
+  end
+
+  test "translates database errors on read and delete into storage errors" do
+    failing = ->(*) { raise ActiveRecord::StatementInvalid, "database is locked" }
+
+    BlobContent.stub(:find_by, failing) do
+      error = assert_raises(Storage::Error) { backend.read(Storage::Backend.generate_key) }
+      assert_not_kind_of Storage::NotFound, error
+    end
+    BlobContent.stub(:where, failing) do
+      assert_raises(Storage::Error) { backend.delete(Storage::Backend.generate_key) }
+    end
   end
 end

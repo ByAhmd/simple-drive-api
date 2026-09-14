@@ -29,7 +29,9 @@ module StorageBackendContract
     key = Storage::Backend.generate_key
     backend.write(key, "".b)
 
-    assert_equal "", backend.read(key)
+    data = backend.read(key)
+    assert_equal Encoding::BINARY, data.encoding
+    assert_equal "", data
   end
 
   def test_keeps_objects_apart_by_key
