@@ -12,6 +12,10 @@ module Storage
       secret_access_key: "S3_SECRET_ACCESS_KEY"
     }.freeze
 
+    # The bucket becomes a URL path segment or a host label; S3 bucket names
+    # are 3-63 lowercase letters, digits, dots and hyphens.
+    BUCKET_FORMAT = /\A[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]\z/
+
     # Prefix segments are limited to characters that need no URI encoding (so
     # the object name on the wire is the prefix plus the key verbatim) and may
     # not start with a dot, which rules out "." and ".." segments.
@@ -20,9 +24,9 @@ module Storage
     def self.from_settings(settings)
       new(
         **settings.slice(*REQUIRED_SETTINGS.keys),
-        path_style: ActiveModel::Type::Boolean.new.cast(settings.fetch(:path_style, true)),
+        path_style: SimpleDrive::Settings.boolean(settings[:path_style], "S3_PATH_STYLE", default: true),
         key_prefix: settings[:key_prefix],
-        timeout: Integer(settings.fetch(:timeout_seconds, 30))
+        timeout: SimpleDrive::Settings.integer(settings[:timeout_seconds], "S3_TIMEOUT_SECONDS", default: 30)
       )
     end
 
@@ -31,6 +35,9 @@ module Storage
       settings = { endpoint:, bucket:, region:, access_key_id:, secret_access_key: }
       REQUIRED_SETTINGS.each do |setting, env_name|
         raise SimpleDrive::ConfigurationError, "#{env_name} must be set" if settings[setting].blank?
+      end
+      unless BUCKET_FORMAT.match?(bucket)
+        raise SimpleDrive::ConfigurationError, "S3_BUCKET must be 3-63 lowercase letters, digits, dots or hyphens"
       end
 
       @client = S3::Client.new(**settings, path_style: path_style, timeout: timeout)

@@ -74,8 +74,8 @@ jobs:
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
           done
-          docker run --rm --network host quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            sh -c "mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing local/simple-drive-test"
+          docker run --rm --network host --entrypoint sh quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z \
+            -c "mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing local/simple-drive-test"
 
       - name: Start an FTP server
         run: |

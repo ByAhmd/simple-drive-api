@@ -1,4 +1,5 @@
 require "test_helper"
+require "socket"
 
 # Exercises the S3 backend against stubbed HTTP (WebMock): request shape,
 # signing, and how each kind of response or transport failure is reported.
@@ -56,6 +57,16 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
     backend = Storage::S3Backend.new(**SETTINGS, path_style: false)
     stub = stub_request(:put, "http://drive.s3.example.test:9000/#{@key}")
              .with(headers: { "Host" => "drive.s3.example.test:9000" }).to_return(status: 200)
+
+    backend.write(@key, "x".b)
+
+    assert_requested stub
+  end
+
+  test "omits the port from the Host header when it is the scheme's default" do
+    backend = Storage::S3Backend.new(**SETTINGS, endpoint: "https://s3.example.test", path_style: false)
+    stub = stub_request(:put, "https://drive.s3.example.test/#{@key}")
+             .with(headers: { "Host" => "drive.s3.example.test" }).to_return(status: 200)
 
     backend.write(@key, "x".b)
 
@@ -130,6 +141,29 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
     assert_raises(Storage::Error) { @backend.delete(@key) }
   end
 
+  test "treats a body shorter than its Content-Length as a failure, not as a short blob" do
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.addr[1]
+    # Net::HTTP retries an idempotent request once, so answer two connections.
+    thread = Thread.new do
+      2.times do
+        socket = server.accept
+        socket.readpartial(4096)
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort")
+        socket.close
+      end
+    end
+    WebMock.disable_net_connect!(allow: "127.0.0.1:#{port}")
+    backend = Storage::S3Backend.new(**SETTINGS, endpoint: "http://127.0.0.1:#{port}")
+
+    error = assert_raises(Storage::Error) { backend.read(@key) }
+    assert_match(/EOFError/, error.message)
+  ensure
+    WebMock.disable_net_connect!
+    server&.close
+    thread&.join(5)
+  end
+
   test "timeouts become storage errors" do
     stub_request(:put, @object_url).to_timeout
 
@@ -165,6 +199,25 @@ class Storage::S3BackendTest < ActiveSupport::TestCase
         Storage::S3Backend.new(**SETTINGS, key_prefix: prefix)
       end
     end
+  end
+
+  test "rejects bucket names S3 would not accept" do
+    [ "b", "My-Bucket", "with space", "-leading", "a" * 64 ].each do |bucket|
+      error = assert_raises(SimpleDrive::ConfigurationError, "expected #{bucket.inspect} to be rejected") do
+        Storage::S3Backend.new(**SETTINGS, bucket: bucket)
+      end
+      assert_match(/S3_BUCKET must be/, error.message)
+    end
+  end
+
+  test "treats a blank addressing style as the default and rejects junk settings" do
+    backend = Storage::S3Backend.from_settings(SETTINGS.merge(path_style: "", timeout_seconds: ""))
+    stub = stub_request(:get, @object_url).to_return(status: 200, body: "d")
+
+    assert_equal "d", backend.read(@key)
+    assert_requested stub
+    assert_raises(SimpleDrive::ConfigurationError) { Storage::S3Backend.from_settings(SETTINGS.merge(path_style: "maybe")) }
+    assert_raises(SimpleDrive::ConfigurationError) { Storage::S3Backend.from_settings(SETTINGS.merge(timeout_seconds: "soon")) }
   end
 
   test "requires an http(s) endpoint" do

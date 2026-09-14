@@ -20,9 +20,16 @@ class Storage::S3BackendIntegrationTest < ActiveSupport::TestCase
       path_style: ENV.fetch("S3_TEST_PATH_STYLE", "true") == "true",
       key_prefix: "integration-tests"
     )
+    # Remember what the contract tests write so teardown can remove it again.
+    @written_keys = []
+    written = @written_keys
+    @backend.define_singleton_method(:write) { |key, data| written << key; super(key, data) }
   end
 
-  teardown { WebMock.disable_net_connect! }
+  teardown do
+    @written_keys&.each { |key| @backend.delete(key) }
+    WebMock.disable_net_connect!
+  end
 
   attr_reader :backend
 

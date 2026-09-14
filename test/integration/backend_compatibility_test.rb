@@ -7,7 +7,7 @@ class BackendCompatibilityTest < ActionDispatch::IntegrationTest
 
   def self.backends
     backends = {
-      "local" => -> { Storage::LocalBackend.new(root: Dir.mktmpdir("simple_drive_compat")) },
+      "local" => -> { Storage::LocalBackend.new(root: "tmp/test_storage/compat") },
       "database" => -> { Storage::DatabaseBackend.new }
     }
     if ENV["S3_TEST_ENDPOINT"].present?
@@ -37,7 +37,8 @@ class BackendCompatibilityTest < ActionDispatch::IntegrationTest
 
   backends.each do |name, build|
     test "stores, retrieves, deduplicates and reports missing blobs with the #{name} backend" do
-      Storage.stub(:backend, build.call) do
+      backend = build.call
+      Storage.stub(:backend, backend) do
         post_blob id: "compat/#{name}.bin", data: Base64.strict_encode64(BYTES)
         assert_response :created
         assert_equal BYTES.bytesize.to_s, response.parsed_body["size"]
@@ -53,6 +54,9 @@ class BackendCompatibilityTest < ActionDispatch::IntegrationTest
         get_blob "compat/#{name}.missing"
         assert_response :not_found
       end
+    ensure
+      Blob.find_each { |blob| backend.delete(blob.storage_key) } if backend
+      WebMock.disable_net_connect!
     end
   end
 end

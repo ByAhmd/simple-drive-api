@@ -14,7 +14,7 @@ class StorageTest < ActiveSupport::TestCase
   end
 
   test "builds the S3 backend from its settings section" do
-    s3 = { endpoint: "http://localhost:9000", bucket: "b", region: "us-east-1",
+    s3 = { endpoint: "http://localhost:9000", bucket: "bucket", region: "us-east-1",
            access_key_id: "k", secret_access_key: "s", path_style: "true", timeout_seconds: "5" }
 
     assert_instance_of Storage::S3Backend, Storage.backend(settings("s3", s3: s3))
