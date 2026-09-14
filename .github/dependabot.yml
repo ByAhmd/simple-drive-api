@@ -5,6 +5,11 @@ updates:
   schedule:
     interval: weekly
   open-pull-requests-limit: 10
+  ignore:
+    # json 3.x changed JSON.parse's signature in a way Active Support 8.1.3
+    # does not handle; the Gemfile pins json < 3 until Rails catches up.
+    - dependency-name: "json"
+      update-types: ["version-update:semver-major"]
 - package-ecosystem: github-actions
   directory: "/"
   schedule:
