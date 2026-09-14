@@ -1,0 +1,22 @@
+module SimpleDrive
+  # Refuses request bodies whose declared Content-Length is above the limit
+  # before Rails reads them. Rails parses JSON parameters while it logs the
+  # request, ahead of any controller callback, so this middleware is the only
+  # place an oversized body can be rejected without buffering and decoding it
+  # first. Bodies sent without a Content-Length are still bounded by the
+  # decoded-size check in Blobs::Store.
+  class RequestBodyLimit
+    def initialize(app, max_bytes:)
+      @app = app
+      @max_bytes = max_bytes
+    end
+
+    def call(env)
+      if env["CONTENT_LENGTH"].to_i > @max_bytes
+        return JsonError.rack_response(413, "payload_too_large", "Request body exceeds the #{@max_bytes} byte limit")
+      end
+
+      @app.call(env)
+    end
+  end
+end
