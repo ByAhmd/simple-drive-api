@@ -4,8 +4,6 @@
 module BearerAuthentication
   extend ActiveSupport::Concern
 
-  BEARER_SCHEME = %r{\ABearer\s+(?<token>[A-Za-z0-9\-._~+/]+=*)\z}i
-
   included do
     before_action :authenticate
   end
@@ -20,9 +18,9 @@ module BearerAuthentication
   end
 
   def authenticated?
-    match = BEARER_SCHEME.match(request.authorization.to_s)
-    return false if match.nil?
+    scheme, token = request.authorization.to_s.split(" ", 2)
+    return false unless scheme&.casecmp?("Bearer") && SimpleDrive::Settings::TOKEN_FORMAT.match?(token.to_s)
 
-    ActiveSupport::SecurityUtils.secure_compare(match[:token], Rails.configuration.x.simple_drive.api_token)
+    ActiveSupport::SecurityUtils.secure_compare(token, Rails.configuration.x.simple_drive.api_token)
   end
 end

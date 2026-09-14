@@ -112,7 +112,7 @@ the first request. In development and test, `dotenv-rails` loads `.env` (ignored
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `SIMPLE_DRIVE_API_TOKEN` | yes | – | The bearer token clients must present. |
+| `SIMPLE_DRIVE_API_TOKEN` | yes | – | The bearer token clients must present (RFC 6750 characters: letters, digits, `-._~+/`, trailing `=`). |
 | `STORAGE_BACKEND` | no | `local` | `local`, `database`, `s3` or `ftp`. |
 | `SIMPLE_DRIVE_MAX_BLOB_BYTES` | no | `10485760` (10 MiB) | Largest accepted blob, in decoded bytes. Also sizes the request body limit. |
 | `LOCAL_STORAGE_PATH` | for `local` | `storage/blobs` | Directory for blob files; relative paths resolve from the application root. |
@@ -130,9 +130,10 @@ the first request. In development and test, `dotenv-rails` loads `.env` (ignored
 | `FTP_TLS` | no | `false` | Explicit FTPS (`AUTH TLS`). |
 | `FTP_TIMEOUT_SECONDS` | no | `30` | Read timeout per FTP operation (connect timeout is 5 s). |
 
-Standard Rails variables also apply in production: `SECRET_KEY_BASE` (or `RAILS_MASTER_KEY`
-for `config/credentials.yml.enc`), `DATABASE_URL` (for example `sqlite3:storage/production.sqlite3`),
-`RAILS_LOG_LEVEL`, `PORT`, `RAILS_MAX_THREADS`.
+Production additionally requires two standard Rails variables: `SECRET_KEY_BASE` (or
+`RAILS_MASTER_KEY` for `config/credentials.yml.enc`) and `DATABASE_URL` (for example
+`sqlite3:storage/production.sqlite3`; the generated `config/database.yml` leaves the production
+database to the deployment). `RAILS_LOG_LEVEL`, `PORT` and `RAILS_MAX_THREADS` are optional.
 
 The test environment does not read these variables: `config/simple_drive.yml` pins the test
 token, the local backend, a temporary directory and a 1 MiB size limit, so a developer's
@@ -145,9 +146,13 @@ Every request to `/v1/...` must carry `Authorization: Bearer <token>`, where the
 service neither issues nor stores tokens, which keeps the mechanism as simple as the
 specification asks for. The comparison is constant-time
 (`ActiveSupport::SecurityUtils.secure_compare`), the token is never logged, and a rejected
-request gets `401` with a `WWW-Authenticate: Bearer realm="Simple Drive"` header before the
-body is even read. The Rails health check at `/up` is the only unauthenticated route; it
-returns no data.
+request gets `401` with a `WWW-Authenticate: Bearer realm="Simple Drive"` header.
+Authentication is the first step in the controller, so an unauthenticated request never reaches
+validation or storage; a malformed body without a valid token is answered `401`, not `400`.
+Tokens are limited to the characters RFC 6750 allows (letters, digits, `-._~+/` and trailing
+`=`), which is checked at boot so a token that could never match is not silently accepted. The
+Rails health check at `/up` is the only unauthenticated route; it returns a plain status page
+with no application data.
 
 ### Selecting the storage backend
 
@@ -191,7 +196,9 @@ S3_PATH_STYLE=true
 ```
 
 For AWS: `S3_ENDPOINT=https://s3.eu-west-1.amazonaws.com`, `S3_REGION=eu-west-1`,
-`S3_PATH_STYLE=false`, plus the bucket and an access key limited to that bucket.
+`S3_PATH_STYLE=false`, plus the bucket and an access key limited to that bucket. Keep
+`S3_PATH_STYLE=true` for bucket names that contain dots: with virtual-hosted `https` addressing
+they do not match the service's wildcard certificate.
 
 ### FTP server (`STORAGE_BACKEND=ftp`, bonus)
 
@@ -233,15 +240,18 @@ For every request the client:
    `AWS4-HMAC-SHA256 Credential=…, SignedHeaders=…, Signature=…`.
 4. Sends `PUT` (upload, `Content-Type: application/octet-stream`), `GET` (download) or `DELETE`
    with a 5-second connect timeout and the configured read/write timeout, verifying TLS
-   certificates for `https` endpoints.
+   certificates for `https` endpoints. A response body shorter than its `Content-Length` is an
+   error, never a truncated blob.
 
 `Storage::S3Backend` interprets the responses: any 2xx is success; a `404` whose XML error code
 is `NoSuchKey` means the object is absent (`Storage::NotFound`); every other status (403
 `AccessDenied`, 404 `NoSuchBucket`, 301 redirects to another region, 5xx) and every transport
 failure (timeouts, DNS errors, refused connections, TLS errors) becomes a `Storage::Error`
 whose message carries only the HTTP status, the S3 error code and the request id, never the
-credentials or the signature. Requests are not retried; a failed store leaves no metadata, so
-the client can simply retry the whole request.
+credentials or the signature. Net::HTTP's built-in single retry of an idempotent request on a
+dropped connection is kept (every operation here is idempotent, because keys are never reused);
+there are no application-level retries, and a failed store leaves no metadata, so the client can
+simply retry the whole request.
 
 The signer is verified against the four worked examples in the Amazon S3 API reference (GET
 Object, PUT Object, GET Bucket Lifecycle, List Objects), the client against stubbed HTTP with
@@ -291,11 +301,13 @@ The suite (Minitest, `test/`) covers:
 - `Blobs::Store` and `Blobs::Retrieve`: strict Base64, type checks, size limits, duplicate ids,
   the race on the unique index and the cleanup that follows, backend failures, backend mismatch;
 - the settings object, the body-size middleware and the exceptions app;
-- request tests for authentication, both endpoints, every documented error, binary fidelity,
+- request tests for authentication, both endpoints, every error the API layer produces (the
+  generic `400` and `500` fallbacks are covered by the exceptions-app tests), binary fidelity,
   path-like identifiers, the size limits, and the same conversation against each backend.
 
 Static analysis and dependency checks: `bin/rubocop`, `bin/brakeman`, `bin/bundler-audit`, or
-all of them plus the tests with `bin/ci`. The GitHub Actions workflow in `.github/workflows/ci.yml`
+all of them plus the tests with `bin/ci` (which drives the other scripts through the shell, so
+it is for Linux and macOS). The GitHub Actions workflow in `.github/workflows/ci.yml`
 runs the same set and starts MinIO and an FTP server so both integration suites run there too.
 
 ### Running the S3 integration tests
@@ -423,8 +435,9 @@ request tests assert the real contract. Programming errors are not rescued; they
 **Request size is bounded twice.** `SimpleDrive::RequestBodyLimit` refuses a body whose
 `Content-Length` exceeds the Base64 form of the largest blob (plus room for line breaks, the id
 and JSON syntax) before Rails parses it, answering with the API's JSON shape; Puma's
-`http_content_length_limit` is set to the same number so an oversized or chunked upload is cut
-off while it is still arriving. Both derive from `SIMPLE_DRIVE_MAX_BLOB_BYTES`.
+`http_content_length_limit` is set to twice that number, so bodies between the two limits still
+get the JSON error while anything larger, or an endless chunked upload, is cut off while it is
+still arriving. Both derive from `SIMPLE_DRIVE_MAX_BLOB_BYTES`.
 
 **Metadata table.** `blobs` has a surrogate primary key and a unique `identifier` column
 (up to 1024 characters), the decoded `size` with a non-negative check constraint, the backend
@@ -443,10 +456,10 @@ required explicitly because it is needed while the application is still being co
   ignored as generated. Nothing in the repository is a real credential.
 - **Authentication** is enforced by a `before_action` in `ApplicationController`, so every
   controller inherits it; the token comparison is constant-time and malformed headers are rejected.
-- **Logging** never includes the token (Rails filters `Authorization` values and the parameter
-  filter covers `token`) nor blob contents (`data` is added to `filter_parameters`, so request
-  logs do not contain payloads). Storage errors are logged with their backend message, which
-  never includes credentials.
+- **Logging** never includes the token (Rails does not log request headers, and the parameter
+  filter covers anything named `token`) nor blob contents (`data` is added to
+  `filter_parameters`, so request logs show `[FILTERED]` instead of payloads). Storage errors are
+  logged with their backend message, which never includes credentials.
 - **Path traversal** is impossible: ids never touch the filesystem, keys are UUIDs validated
   against a strict pattern, and files always live under the configured root.
 - **SQL** goes through Active Record's parameterised queries; there is no string interpolation
@@ -478,15 +491,17 @@ required explicitly because it is needed while the application is still being co
   about, but the design would need streaming for very large objects.
 - **No listing, overwrite or delete endpoints.** The specification defines store and retrieve
   only; ids are immutable once stored.
-- **No automatic retries** against S3 or FTP-style services; a failed store leaves no trace and
-  the client retries the whole request.
+- **No application-level retries** against S3 or FTP beyond Net::HTTP's single retry of an
+  idempotent request on a dropped connection; a failed store leaves no trace and the client
+  retries the whole request.
 - **Orphaned objects** can remain after a crash between the backend write and the metadata
   insert (see Design decisions); they never affect API behaviour.
 - **Switching backends does not move data.** Blobs stored by a previous backend answer `503`
   until that backend is configured again or the data is migrated.
-- **SQLite** is the default database: single-writer, file-based, appropriate for this scope;
-  the schema uses only portable types and constraints, so PostgreSQL or MySQL are a
-  `database.yml` change away.
+- **SQLite** is the default database: single-writer, file-based, appropriate for this scope.
+  The schema uses portable types and constraints, so PostgreSQL is a `database.yml` change away;
+  MySQL would additionally need a shorter unique index on `identifier` and a `longblob` column
+  for `blob_contents.data`.
 - **Bodies without `Content-Length`** are not caught by the Rack middleware; Puma's
   `http_content_length_limit` covers chunked uploads at the server level, and the decoded size
   check always applies.

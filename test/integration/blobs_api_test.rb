@@ -91,6 +91,15 @@ class BlobsApiTest < ActionDispatch::IntegrationTest
     assert_match Storage::Backend::KEY_FORMAT, File.basename(stored.first)
   end
 
+  test "ignores query-string parameters when storing" do
+    post "/v1/blobs?id=evil&data=QUJD", params: { id: "good", data: HELLO }.to_json, headers: json_headers
+
+    assert_response :created
+    assert_equal "good", response.parsed_body["id"]
+    assert_equal "27", response.parsed_body["size"]
+    assert_nil Blob.find_by(identifier: "evil")
+  end
+
   test "rejects a duplicate identifier" do
     post_blob id: "twice", data: HELLO
     post_blob id: "twice", data: HELLO

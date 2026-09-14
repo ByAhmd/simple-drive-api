@@ -29,6 +29,32 @@ class SimpleDrive::SettingsTest < ActiveSupport::TestCase
     end
   end
 
+  test "rejects tokens the bearer parser could never match" do
+    [ "has space", "quote\"d", "tab\tbed", "ünïcode" ].each do |token|
+      error = assert_raises(SimpleDrive::ConfigurationError, "expected #{token.inspect} to be rejected") do
+        SimpleDrive::Settings.new(VALID.merge(api_token: token))
+      end
+      assert_match(/SIMPLE_DRIVE_API_TOKEN may only contain/, error.message)
+    end
+    assert_equal "a-b.c_d~e+f/g==", SimpleDrive::Settings.new(VALID.merge(api_token: "a-b.c_d~e+f/g==")).api_token
+  end
+
+  test "parses optional booleans and integers, treating blank as the default" do
+    assert_equal true, SimpleDrive::Settings.boolean("", "X", default: true)
+    assert_equal false, SimpleDrive::Settings.boolean(nil, "X", default: false)
+    assert_equal false, SimpleDrive::Settings.boolean("False", "X", default: true)
+    assert_equal true, SimpleDrive::Settings.boolean(" 1 ", "X", default: false)
+    assert_equal 21, SimpleDrive::Settings.integer("", "X", default: 21)
+    assert_equal 2121, SimpleDrive::Settings.integer("2121", "X", default: 21)
+
+    [ "yes", "no", "maybe" ].each do |value|
+      error = assert_raises(SimpleDrive::ConfigurationError) { SimpleDrive::Settings.boolean(value, "S3_PATH_STYLE", default: true) }
+      assert_equal "S3_PATH_STYLE must be true or false", error.message
+    end
+    error = assert_raises(SimpleDrive::ConfigurationError) { SimpleDrive::Settings.integer("soon", "S3_TIMEOUT_SECONDS", default: 30) }
+    assert_equal "S3_TIMEOUT_SECONDS must be an integer", error.message
+  end
+
   test "requires the backend name" do
     error = assert_raises(SimpleDrive::ConfigurationError) { SimpleDrive::Settings.new(VALID.merge(storage_backend: nil)) }
     assert_equal "STORAGE_BACKEND must be set", error.message

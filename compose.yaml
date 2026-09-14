@@ -7,7 +7,7 @@ services:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -34,8 +34,8 @@ services:
   ftp:
     image: delfer/alpine-ftp-server:latest
     ports:
-      - "2121:21"
-      - "21000-21010:21000-21010"
+      - "127.0.0.1:2121:21"
+      - "127.0.0.1:21000-21010:21000-21010"
     environment:
       USERS: "drive|drivepass|/ftp/drive"
       ADDRESS: localhost

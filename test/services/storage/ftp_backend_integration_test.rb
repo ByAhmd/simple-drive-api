@@ -16,6 +16,14 @@ class Storage::FtpBackendIntegrationTest < ActiveSupport::TestCase
       password: ENV.fetch("FTP_TEST_PASSWORD"),
       root: "integration-tests"
     )
+    # Remember what the contract tests write so teardown can remove it again.
+    @written_keys = []
+    written = @written_keys
+    @backend.define_singleton_method(:write) { |key, data| written << key; super(key, data) }
+  end
+
+  teardown do
+    @written_keys&.each { |key| @backend.delete(key) }
   end
 
   attr_reader :backend

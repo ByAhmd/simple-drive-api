@@ -98,6 +98,12 @@ module Storage
         http.open_timeout = OPEN_TIMEOUT
         http.read_timeout = @timeout
         http.write_timeout = @timeout
+        # A body cut short of its Content-Length must be an error, not a
+        # truncated blob returned as if it were complete.
+        http.ignore_eof = false
+        # Net::HTTP's single retry on a dropped connection is safe here: every
+        # operation is idempotent because keys are never reused.
+        http.max_retries = 1
         http
       end
     end

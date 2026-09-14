@@ -14,16 +14,15 @@ module Storage
     ].freeze
 
     def self.from_settings(settings)
-      boolean = ActiveModel::Type::Boolean.new
       new(
         host: settings[:host],
-        port: Integer(settings.fetch(:port, 21)),
+        port: SimpleDrive::Settings.integer(settings[:port], "FTP_PORT", default: 21),
         username: settings[:username],
         password: settings[:password],
         root: settings[:root],
-        passive: boolean.cast(settings.fetch(:passive, true)),
-        tls: boolean.cast(settings.fetch(:tls, false)),
-        timeout: Integer(settings.fetch(:timeout_seconds, 30))
+        passive: SimpleDrive::Settings.boolean(settings[:passive], "FTP_PASSIVE", default: true),
+        tls: SimpleDrive::Settings.boolean(settings[:tls], "FTP_TLS", default: false),
+        timeout: SimpleDrive::Settings.integer(settings[:timeout_seconds], "FTP_TIMEOUT_SECONDS", default: 30)
       )
     end
 

@@ -12,10 +12,12 @@ Authorization: Bearer <token>
 
 The token is the value of `SIMPLE_DRIVE_API_TOKEN` on the server. A missing header, another
 scheme (`Basic`, `Token`), a malformed value or a wrong token yields `401 Unauthorized` with a
-`WWW-Authenticate: Bearer realm="Simple Drive"` header. Authentication is checked before the
-body is read, so an unauthenticated request never reaches validation or storage.
+`WWW-Authenticate: Bearer realm="Simple Drive"` header. Authentication is the first step in the
+controller, so an unauthenticated request never reaches validation or storage; a malformed body
+without a valid token is answered `401`, not `400`.
 
-The only unauthenticated route is the Rails health check `GET /up`, which returns no data.
+The only unauthenticated route is the Rails health check `GET /up`, which returns a plain
+status page with no application data.
 
 ## Error format
 
