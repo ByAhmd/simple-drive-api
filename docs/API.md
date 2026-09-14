@@ -1,6 +1,7 @@
 # Simple Drive API reference
 
-Base path: `/v1`. All request and response bodies are JSON (`application/json; charset=utf-8`).
+Base path: `/v1`. Request bodies and the application's responses are JSON
+(`application/json; charset=utf-8`).
 
 ## Authentication
 
@@ -13,15 +14,17 @@ Authorization: Bearer <token>
 The token is the value of `SIMPLE_DRIVE_API_TOKEN` on the server. A missing header, another
 scheme (`Basic`, `Token`), a malformed value or a wrong token yields `401 Unauthorized` with a
 `WWW-Authenticate: Bearer realm="Simple Drive"` header. Authentication is the first step in the
-controller, so an unauthenticated request never reaches validation or storage; a malformed body
-without a valid token is answered `401`, not `400`.
+controller, so an unauthenticated request never reaches validation or storage, and a body that is
+not valid JSON is answered `401`, not `400`, when the token is missing or wrong.
 
-The only unauthenticated route is the Rails health check `GET /up`, which returns a plain
-status page with no application data.
+A few requests are refused before the controller runs, whatever the token: an oversized body
+(`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`) header, a path or body that is
+not valid UTF-8 or percent-encoding (`400`), and a path with no route (`404`). None of them
+returns data. There is no unauthenticated route.
 
 ## Error format
 
-Every error, from whichever layer produced it, has the same shape:
+Every error the application returns has the same shape:
 
 ```json
 { "error": { "code": "not_found", "message": "No blob with this id exists" } }
@@ -35,12 +38,17 @@ Every error, from whichever layer produced it, has the same shape:
 | 400    | `bad_request`            | The request could not be understood (for example an invalid byte sequence in the path).  |
 | 401    | `unauthorized`           | Missing, malformed or wrong bearer token.                                                |
 | 404    | `not_found`              | No blob has this id, or no route matches the path.                                       |
+| 406    | `not_acceptable`         | The `Accept` header cannot be parsed.                                                    |
 | 409    | `conflict`               | A blob with this id already exists.                                                      |
 | 413    | `payload_too_large`      | The decoded data, or the request body itself, exceeds the configured limit.              |
-| 415    | `unsupported_media_type` | `POST /v1/blobs` without `Content-Type: application/json`.                               |
+| 415    | `unsupported_media_type` | `POST /v1/blobs` without `Content-Type: application/json`, or a `Content-Type` header that cannot be parsed. |
 | 422    | `validation_failed`      | A field is missing, has the wrong type, the id is invalid, or `data` is not valid Base64. |
 | 500    | `internal_error`         | An unexpected error; details are logged server-side only.                                |
 | 503    | `storage_unavailable`    | The storage backend failed (I/O error, S3 or FTP error, timeout) or cannot serve this blob. |
+
+A request body larger than twice the body limit described under `data` below is refused by the
+web server itself, before the application runs, with a plain-text `413` and a closed connection
+(a client that keeps sending may see the connection reset instead).
 
 ## POST /v1/blobs
 
@@ -64,7 +72,8 @@ Only the JSON body is read; query-string parameters are ignored.
 An opaque identifier chosen by the client. It is stored and compared exactly as sent
 (case-sensitive, no normalisation) and is never interpreted as a path by the server.
 
-- Required, a JSON string, 1 to 1024 characters.
+- Required, a JSON string of 1 to 1024 bytes in UTF-8 (so the percent-encoded id always fits in
+  a request path).
 - Must not be blank and must not contain control characters (U+0000 to U+001F, U+007F).
 - Anything else is allowed: UUIDs, slashes, dots, spaces, non-ASCII text.
 - Must be unique; a second `POST` with the same id is rejected with `409`.
@@ -93,7 +102,7 @@ The blob content, Base64-encoded (RFC 4648, standard alphabet, with padding).
 `size` is the decoded size in bytes, rendered as a string exactly as in the specification;
 `created_at` is the UTC time the blob was recorded, in ISO 8601 with second precision.
 
-Failure responses: `400`, `401`, `409`, `413`, `415`, `422`, `503` as described above.
+Failure responses: `400`, `401`, `406`, `409`, `413`, `415`, `422`, `503` as described above.
 
 ## GET /v1/blobs/{id}
 
@@ -124,8 +133,8 @@ the id `report.pdf`.
 
 `data` is the exact stored bytes, Base64-encoded without line breaks.
 
-Failure responses: `401`, `404` (unknown id), `503` (the backend failed, or the blob was stored
-by a backend other than the one currently configured).
+Failure responses: `400`, `401`, `404` (unknown id), `406`, `503` (the backend failed, or the
+blob was stored by a backend other than the one currently configured).
 
 ## Examples
 

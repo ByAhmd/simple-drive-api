@@ -106,8 +106,9 @@ the test database by invoking `bin/rails` itself, which only works where the she
 All settings come from environment variables, read through `config/simple_drive.yml` and
 validated at boot by `SimpleDrive::Settings` and by the selected backend, so a missing or
 malformed value stops the process with a message naming the variable rather than failing on
-the first request. In development and test, `dotenv-rails` loads `.env` (ignored by git);
-`.env.example` documents every variable with placeholder values.
+the first request. A variable that is set but empty gets its default, like one that is unset.
+In development and test, `dotenv-rails` loads `.env` (ignored by git); `.env.example` documents
+every variable with placeholder values.
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
@@ -121,16 +122,16 @@ the first request. In development and test, `dotenv-rails` loads `.env` (ignored
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | for `s3` | – | Credentials used to sign requests. |
 | `S3_PATH_STYLE` | no | `true` | `true` for `http://host/bucket/key` (MinIO), `false` for `http://bucket.host/key` (AWS default). |
 | `S3_KEY_PREFIX` | no | – | Optional prefix inside the bucket, e.g. `blobs`. Letters, digits, `.`, `_`, `-` and `/`. |
-| `S3_TIMEOUT_SECONDS` | no | `30` | Read/write timeout per S3 request (connect timeout is 5 s). |
+| `S3_TIMEOUT_SECONDS` | no | `30` | Read/write timeout per S3 request, which is never retried (connect timeout is 5 s). |
 | `FTP_HOST`, `FTP_USERNAME`, `FTP_PASSWORD` | for `ftp` | – | FTP server and account. |
-| `FTP_PORT` | no | `21` | Control connection port. |
+| `FTP_PORT` | no | `21` | Control connection port (1-65535). |
 | `FTP_ROOT_PATH` | no | login directory | Directory for blob files on the server; created if missing (one level). |
 | `FTP_PASSIVE` | no | `true` | Passive mode, which works through NAT and container port mappings. |
 | `FTP_TLS` | no | `false` | Explicit FTPS (`AUTH TLS`). |
 | `FTP_TIMEOUT_SECONDS` | no | `30` | Read timeout per FTP operation (connect timeout is 5 s). |
 
-Production additionally requires two standard Rails variables: `SECRET_KEY_BASE` (or
-`RAILS_MASTER_KEY` for `config/credentials.yml.enc`) and `DATABASE_URL` (for example
+Production additionally requires two standard Rails variables: `SECRET_KEY_BASE` (for example
+the output of `bin/rails secret`) and `DATABASE_URL` (for example
 `sqlite3:storage/production.sqlite3`; the generated `config/database.yml` leaves the production
 database to the deployment). `RAILS_LOG_LEVEL`, `PORT` and `RAILS_MAX_THREADS` are optional.
 
@@ -147,11 +148,15 @@ specification asks for. The comparison is constant-time
 (`ActiveSupport::SecurityUtils.secure_compare`), the token is never logged, and a rejected
 request gets `401` with a `WWW-Authenticate: Bearer realm="Simple Drive"` header.
 Authentication is the first step in the controller, so an unauthenticated request never reaches
-validation or storage; a malformed body without a valid token is answered `401`, not `400`.
-Tokens are limited to the characters RFC 6750 allows (letters, digits, `-._~+/` and trailing
-`=`), which is checked at boot so a token that could never match is not silently accepted. The
-Rails health check at `/up` is the only unauthenticated route; it returns a plain status page
-with no application data.
+validation or storage, and a body that is not valid JSON is answered `401`, not `400`, when the
+token is missing or wrong. A few requests are refused before the controller runs, whatever the
+token: an oversized body (`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`)
+header, a path or body that is not valid UTF-8 or percent-encoding (`400`), and a path with no
+route (`404`). None of these returns data. Tokens are limited to the characters RFC 6750 allows
+(letters, digits, `-._~+/` and trailing `=`), which is checked at boot so a token that could
+never match is not silently accepted. There is no unauthenticated route: the health check that
+`rails new` adds at `/up` has been removed, because the specification requires every request to
+be authenticated.
 
 ### Selecting the storage backend
 
@@ -187,7 +192,7 @@ implements the S3 REST API with Signature Version 4. For MinIO started with the 
 
 ```dotenv
 STORAGE_BACKEND=s3
-S3_ENDPOINT=http://localhost:9000
+S3_ENDPOINT=http://127.0.0.1:9000
 S3_BUCKET=simple-drive
 S3_ACCESS_KEY_ID=minioadmin
 S3_SECRET_ACCESS_KEY=minioadmin
@@ -205,12 +210,12 @@ they do not match the service's wildcard certificate.
 key inside `FTP_ROOT_PATH` (created on first use when missing). A connection is opened per
 operation, transfers are binary, uploads go to a temporary name and are renamed into place, and
 passive mode is on by default. A `550` reply to a download is reported as "no object" because
-FTP does not distinguish a missing file from an unreadable one. With the server from
-`compose.yaml`:
+FTP does not distinguish a missing file from an unreadable one; any other error reply is reported
+as a storage failure. With the server from `compose.yaml`:
 
 ```dotenv
 STORAGE_BACKEND=ftp
-FTP_HOST=localhost
+FTP_HOST=127.0.0.1
 FTP_PORT=2121
 FTP_USERNAME=drive
 FTP_PASSWORD=drivepass
@@ -239,17 +244,19 @@ For every request the client:
    `AWS4-HMAC-SHA256 Credential=…, SignedHeaders=…, Signature=…`.
 4. Sends `PUT` (upload, `Content-Type: application/octet-stream`), `GET` (download) or `DELETE`
    with a 5-second connect timeout and the configured read/write timeout, verifying TLS
-   certificates for `https` endpoints. A response body shorter than its `Content-Length` is an
-   error, never a truncated blob.
+   certificates for `https` endpoints. It asks for `Accept-Encoding: identity`, so the stored
+   bytes are never compressed and inflated on the way, and a response body shorter than its
+   `Content-Length` is an error, never a truncated blob.
 
 `Storage::S3Backend` interprets the responses: any 2xx is success; a `404` whose XML error code
 is `NoSuchKey` means the object is absent (`Storage::NotFound`); every other status (403
 `AccessDenied`, 404 `NoSuchBucket`, 301 redirects to another region, 5xx) and every transport
-failure (timeouts, DNS errors, refused connections, TLS errors) becomes a `Storage::Error`
-whose message carries only the HTTP status, the S3 error code and the request id, never the
-credentials or the signature. Net::HTTP's built-in single retry of an idempotent request on a
-dropped connection is kept (every operation here is idempotent, because keys are never reused);
-there are no application-level retries, and a failed store leaves no metadata, so the client can
+failure (timeouts, DNS errors, refused connections, TLS errors, malformed responses) becomes a
+`Storage::Error`. Its message, which goes to the log and never to the client, carries the HTTP
+status, the S3 error code and the request id, or for a transport failure the exception and its
+message (which name the endpoint), never the credentials or the signature. Requests are not
+retried: Net::HTTP's automatic retry is switched off, so `S3_TIMEOUT_SECONDS` really bounds each
+operation and an upload is never sent twice. A failed store leaves no metadata, so the client can
 simply retry the whole request.
 
 The signer is verified against the four worked examples in the Amazon S3 API reference (GET
@@ -274,7 +281,9 @@ $env:SIMPLE_DRIVE_API_TOKEN = "change-me"; ruby bin/rails server
 
 To try the S3 or FTP backend locally, start the servers first: `docker compose up -d` brings
 up MinIO on port 9000 (creating the `simple-drive` and `simple-drive-test` buckets) and an FTP
-server on port 2121 (user `drive`, password `drivepass`); then use the values shown above.
+server on port 2121 (user `drive`, password `drivepass`); then use the values shown above. Both
+listen on `127.0.0.1` only, so use that address rather than `localhost`, which some systems
+(Windows among them) try over IPv6 first, adding about two seconds to every connection.
 
 ## Running the tests
 
@@ -289,17 +298,20 @@ The suite (Minitest, `test/`) covers:
 - `test/support/storage_backend_contract.rb`: the behaviour every backend must share (every
   byte value, empty and large objects, isolation by key, not-found and delete semantics), run
   against the local, database, S3 and FTP backends;
-- the local backend (directory layout, atomic writes, rejection of non-UUID keys, filesystem
-  errors) and the database backend (separate table, error translation);
+- the local backend (directory layout, atomic writes and cleanup after a failed rename, rejection
+  of non-UUID keys, filesystem errors) and the database backend (separate table, error
+  translation on every operation);
 - the SigV4 signer against the official AWS example vectors, and the S3 backend against
   stubbed HTTP: request shape, recomputable signatures, both addressing styles, key prefixes,
-  binary bodies, 404/403/5xx/redirect handling, timeouts and refused connections;
+  binary bodies, 404/403/5xx/redirect handling, truncated and malformed responses, applied
+  timeouts without retries, and refused connections;
 - the FTP backend against an in-memory stand-in for `Net::FTP` that answers like a real server
-  (temporary name and rename, root creation, 550 handling, error translation, connection
-  options, credentials kept out of messages);
+  (temporary name and rename, root creation including a concurrent one, 550 versus other error
+  replies, error translation, connection options, credentials kept out of messages);
 - `Blobs::Store` and `Blobs::Retrieve`: strict Base64, type checks, size limits, duplicate ids,
   the race on the unique index and the cleanup that follows, backend failures, backend mismatch;
-- the settings object, the body-size middleware and the exceptions app;
+- the settings object and the real `config/simple_drive.yml` rendering, the body-size
+  middleware and the exceptions app;
 - request tests for authentication, both endpoints, every error the API layer produces (the
   generic `400` and `500` fallbacks are covered by the exceptions-app tests), binary fidelity,
   path-like identifiers, the size limits, and the same conversation against each backend.
@@ -316,7 +328,7 @@ account. With MinIO from `compose.yaml`:
 
 ```bash
 docker compose up -d
-S3_TEST_ENDPOINT=http://localhost:9000 S3_TEST_BUCKET=simple-drive-test \
+S3_TEST_ENDPOINT=http://127.0.0.1:9000 S3_TEST_BUCKET=simple-drive-test \
 S3_TEST_ACCESS_KEY_ID=minioadmin S3_TEST_SECRET_ACCESS_KEY=minioadmin bin/rails test
 ```
 
@@ -330,7 +342,7 @@ suite talk to a real bucket. The tests write under the `integration-tests/` pref
 Skipped unless `FTP_TEST_HOST` is set. With the server from `compose.yaml`:
 
 ```bash
-FTP_TEST_HOST=localhost FTP_TEST_PORT=2121 FTP_TEST_USERNAME=drive FTP_TEST_PASSWORD=drivepass bin/rails test
+FTP_TEST_HOST=127.0.0.1 FTP_TEST_PORT=2121 FTP_TEST_USERNAME=drive FTP_TEST_PASSWORD=drivepass bin/rails test
 ```
 
 The tests use the `integration-tests` directory below the account's login directory.
@@ -370,19 +382,24 @@ curl http://localhost:3000/v1/blobs/hello -H "Authorization: Bearer YOUR_TOKEN"
 }
 ```
 
-Errors always look like `{ "error": { "code": "...", "message": "..." } }`:
+Errors from the application always look like `{ "error": { "code": "...", "message": "..." } }`:
 
 | Status | Code | Meaning |
 |--------|------|---------|
 | 400 | `invalid_json` / `bad_request` | Body is not JSON / request cannot be understood |
 | 401 | `unauthorized` | Missing or wrong bearer token |
 | 404 | `not_found` | Unknown id or route |
+| 406 | `not_acceptable` | Unparsable `Accept` header |
 | 409 | `conflict` | Id already stored |
 | 413 | `payload_too_large` | Blob or request body above the limit |
-| 415 | `unsupported_media_type` | `POST` without `Content-Type: application/json` |
+| 415 | `unsupported_media_type` | `POST` without `Content-Type: application/json`, or an unparsable `Content-Type` |
 | 422 | `validation_failed` | Missing/invalid `id` or `data`, invalid Base64 |
 | 500 | `internal_error` | Unexpected error (details only in the log) |
 | 503 | `storage_unavailable` | Backend failure, timeout, or blob stored by another backend |
+
+A request body larger than twice the documented limit never reaches the application: Puma answers
+with a plain-text `413` and closes the connection (a client that keeps sending may see the
+connection reset instead).
 
 ## Design decisions
 
@@ -426,10 +443,12 @@ succeed later and the client must not learn anything about the backend.
 
 **Errors are JSON everywhere.** Controllers map application errors with `rescue_from`;
 `SimpleDrive::ExceptionsApp` (Rails' `config.exceptions_app`) handles what escapes them
-(malformed JSON, unknown routes, unexpected exceptions) so no HTML page is ever returned. The
-test environment renders errors the production way (`consider_all_requests_local = false`) so
-request tests assert the real contract. Programming errors are not rescued; they surface as
-`500` in production and as failures in tests.
+(malformed JSON, unknown routes, unparsable headers, unexpected exceptions) so no HTML page is
+ever returned. Every environment renders errors this way (`consider_all_requests_local = false`
+in development and test too), so a developer sees the contract clients get and request tests
+assert it; the details go to the log. Programming errors are not rescued; they surface as `500`
+and as failures in tests. The only non-JSON error is Puma's own `413` for a body far above the
+limit.
 
 **Request size is bounded twice.** `SimpleDrive::RequestBodyLimit` refuses a body whose
 `Content-Length` exceeds the Base64 form of the largest blob (plus room for JSON-escaped line
@@ -439,8 +458,9 @@ get the JSON error while anything larger, or an endless chunked upload, is cut o
 still arriving. Both derive from `SIMPLE_DRIVE_MAX_BLOB_BYTES`.
 
 **Metadata table.** `blobs` has a surrogate primary key and a unique `identifier` column
-(up to 1024 characters), the decoded `size` with a non-negative check constraint, the backend
-name, the unique storage key and timestamps. The `created_at` returned by the API is this row's
+(up to 1024 bytes, so that the percent-encoded id always fits within Puma's 8192-byte request
+path), the decoded `size` with a non-negative check constraint, the backend name, the unique
+storage key and timestamps. The `created_at` returned by the API is this row's
 timestamp in UTC.
 
 **Configuration.** `config/simple_drive.yml` with `config_for` is the Rails convention for
@@ -456,9 +476,12 @@ required explicitly because it is needed while the application is still being co
 - **Authentication** is enforced by a `before_action` in `ApplicationController`, so every
   controller inherits it; the token comparison is constant-time and malformed headers are rejected.
 - **Logging** never includes the token (Rails does not log request headers, and the parameter
-  filter covers anything named `token`) nor blob contents (`data` is added to
-  `filter_parameters`, so request logs show `[FILTERED]` instead of payloads). Storage errors are
-  logged with their backend message, which never includes credentials.
+  filter covers anything named `token`). Blob contents are not logged for well-formed requests:
+  `data` is in `filter_parameters`, so request logs show `[FILTERED]`, and binary SQL values are
+  logged as a byte count. For a body that is not valid JSON, Rails logs a short excerpt of it
+  with the parse error, and the whole body at `debug` level, so do not run production with
+  `RAILS_LOG_LEVEL=debug`. Storage errors are logged with their backend message, which never
+  includes credentials.
 - **Path traversal** is impossible: ids never touch the filesystem, keys are UUIDs validated
   against a strict pattern, and files always live under the configured root.
 - **SQL** goes through Active Record's parameterised queries; there is no string interpolation
@@ -475,7 +498,7 @@ required explicitly because it is needed while the application is still being co
 - **API-only stack**: no sessions, cookies or CSRF surface; no CORS middleware is installed, so
   browsers cannot call the API cross-origin unless an operator adds `rack-cors` deliberately.
 - **Error responses** carry fixed messages; stack traces, paths, S3 endpoints and signatures stay
-  in the server log. Debug output is limited to `development`.
+  in the server log. Rails' debug error pages are switched off in every environment.
 - **Host authorization**: set `config.hosts` in `config/environments/production.rb` to the public
   hostname when deploying, as the generated comment suggests.
 - Static analysis (`bin/brakeman`) and the dependency audit (`bin/bundler-audit`) run in CI
@@ -490,20 +513,20 @@ required explicitly because it is needed while the application is still being co
   about, but the design would need streaming for very large objects.
 - **No listing, overwrite or delete endpoints.** The specification defines store and retrieve
   only; ids are immutable once stored.
-- **No application-level retries** against S3 or FTP beyond Net::HTTP's single retry of an
-  idempotent request on a dropped connection; a failed store leaves no trace and the client
-  retries the whole request.
+- **No retries** against S3 or FTP; a failed store leaves no trace and the client retries the
+  whole request.
 - **Orphaned objects** can remain after a crash between the backend write and the metadata
   insert (see Design decisions); they never affect API behaviour.
 - **Switching backends does not move data.** Blobs stored by a previous backend answer `503`
   until that backend is configured again or the data is migrated.
 - **SQLite** is the default database: single-writer, file-based, appropriate for this scope.
-  The schema uses portable types and constraints, so PostgreSQL is a `database.yml` change away;
-  MySQL would additionally need a shorter unique index on `identifier` and a `longblob` column
-  for `blob_contents.data`.
-- **Bodies without `Content-Length`** are not caught by the Rack middleware; Puma's
-  `http_content_length_limit` covers chunked uploads at the server level, and the decoded size
-  check always applies.
+  The schema uses portable types and constraints, so PostgreSQL needs only the `pg` gem and a
+  `database.yml` change; MySQL would additionally need a shorter unique index on `identifier`
+  (InnoDB keys are limited to 3072 bytes) and a `longblob` column for `blob_contents.data`.
+- **Oversized requests** above twice the body limit are refused by Puma with a plain-text `413`
+  (or a connection reset, for a client that keeps sending) instead of the JSON error shape.
+  Chunked uploads are de-chunked by Puma, so the JSON `413` from the Rack middleware applies to
+  them like to any other body.
 - **Identifiers with a leading, trailing or doubled slash** must be percent-encoded in `GET`
   URLs because the router normalises the path; interior single slashes work unencoded.
 - **Puma on Windows** runs in single-process mode; MinIO's community container images are
