@@ -53,7 +53,8 @@ module SimpleDrive
 
     def initialize(options)
       options = options.to_h.symbolize_keys
-      @api_token = required_string(options, :api_token, "SIMPLE_DRIVE_API_TOKEN")
+      @api_token = required_string(options, :api_token, "SIMPLE_DRIVE_API_TOKEN",
+                                   hint: "for local use, run bin/setup or copy .env.example to .env")
       unless TOKEN_FORMAT.match?(@api_token)
         raise ConfigurationError, "SIMPLE_DRIVE_API_TOKEN may only contain letters, digits, - . _ ~ + / and trailing ="
       end
@@ -75,9 +76,9 @@ module SimpleDrive
 
     private
 
-    def required_string(options, key, env_name)
+    def required_string(options, key, env_name, hint: nil)
       value = options[key].to_s.strip
-      raise ConfigurationError, "#{env_name} must be set" if value.empty?
+      raise ConfigurationError, [ "#{env_name} must be set", hint ].compact.join("; ") if value.empty?
 
       value
     end

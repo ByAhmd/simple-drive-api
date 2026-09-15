@@ -26,7 +26,8 @@ class SimpleDrive::SettingsTest < ActiveSupport::TestCase
   test "requires the API token" do
     [ nil, "", "   " ].each do |token|
       error = assert_raises(SimpleDrive::ConfigurationError) { SimpleDrive::Settings.new(VALID.merge(api_token: token)) }
-      assert_equal "SIMPLE_DRIVE_API_TOKEN must be set", error.message
+      assert_equal "SIMPLE_DRIVE_API_TOKEN must be set; for local use, run bin/setup or copy .env.example to .env",
+                   error.message
     end
   end
 
