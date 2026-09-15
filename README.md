@@ -157,14 +157,15 @@ Authentication is the first step in the controller, so an unauthenticated reques
 validation or storage, and a body that is not valid JSON is answered `401`, not `400`, when the
 token is missing or wrong. A few requests are refused before the controller runs, whatever the
 token: an oversized body (`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`)
-header, a path that is not valid UTF-8, a query string or body that is not valid UTF-8 or
-percent-encoding (`400`), and a path with no route (`404`). None of these returns data. Tokens are limited to the characters RFC 6750 allows
-(letters, digits, `-._~+/` and trailing `=`), which is checked at boot so a token that could
-never match is not silently accepted. The application has no unauthenticated route: the health
-check that `rails new` adds at `/up` has been removed, because the specification requires every
-request to be authenticated. In the development environment only, Rails itself also serves its
-welcome page at `/` and the `/rails/info` pages to local requests; test and production have no
-route outside `/v1`.
+header, a path that is not valid UTF-8 or a query string or body that is not valid UTF-8 or
+percent-encoding (`400`), and a path with no route (`404`). None of these returns data.
+
+Tokens are limited to the characters RFC 6750 allows (letters, digits, `-._~+/` and trailing `=`),
+which is checked at boot so a token that could never match is not silently accepted. The
+application has no unauthenticated route: the health check that `rails new` adds at `/up` has been
+removed, because the specification requires every request to be authenticated. In the development
+environment only, Rails itself also serves its welcome page at `/` and the `/rails/info` pages to
+local requests; test and production have no route outside `/v1`.
 
 ### Selecting the storage backend
 
@@ -321,8 +322,8 @@ bin/rails blobs:sweep_orphans
 It only touches uploads older than `OLDER_THAN_MINUTES` (default `60`), so requests still in
 progress are never affected, and it never deletes bytes that a blob points to. It works on the
 configured backend, reports rows that belong to other backends, and exits with an error when some
-objects could not be removed, so a scheduler notices; those are retried on the next run. Run it on a schedule, for
-example hourly from cron:
+objects could not be removed, so a scheduler notices; those are retried on the next run. Run it
+on a schedule, for example hourly from cron:
 
 ```bash
 0 * * * * cd /srv/simple-drive && bin/rails blobs:sweep_orphans
@@ -516,11 +517,11 @@ succeed later and the client must not learn anything about the backend.
 **Errors are JSON everywhere.** Controllers map application errors with `rescue_from`;
 `SimpleDrive::ExceptionsApp` (Rails' `config.exceptions_app`) handles what escapes them
 (malformed JSON, unknown routes, unparsable headers, unexpected exceptions), so the API never
-answers with an HTML page. Every environment renders errors this way (`consider_all_requests_local = false`
-in development and test too), so a developer sees the contract clients get and request tests
-assert it; the details go to the log. Programming errors are not rescued; they surface as `500`
-and as failures in tests. The only non-JSON error is Puma's own `413` for a body far above the
-limit.
+answers with an HTML page. Every environment renders errors this way
+(`consider_all_requests_local = false` in development and test too), so a developer sees the
+contract clients get and request tests assert it; the details go to the log. Programming errors
+are not rescued; they surface as `500` and as failures in tests. The only non-JSON error is Puma's
+own `413` for a body far above the limit.
 
 **Request size is bounded twice.** `SimpleDrive::RequestBodyLimit` refuses a body whose
 `Content-Length` exceeds the Base64 form of the largest blob (plus room for JSON-escaped line

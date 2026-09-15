@@ -18,10 +18,9 @@ controller, so an unauthenticated request never reaches validation or storage, a
 not valid JSON is answered `401`, not `400`, when the token is missing or wrong.
 
 A few requests are refused before the controller runs, whatever the token: an oversized body
-(`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`) header, a path or body that is
-not valid UTF-8, a query string or body that is not valid UTF-8 or percent-encoding (`400`), and a
-path with no route (`404`). None of them returns data. The application has no unauthenticated
-route.
+(`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`) header, a path that is not valid
+UTF-8 or a query string or body that is not valid UTF-8 or percent-encoding (`400`), and a path
+with no route (`404`). None of them returns data. The application has no unauthenticated route.
 
 ## Error format
 
