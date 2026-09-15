@@ -1,3 +1,5 @@
+require_relative "filtered_output"
+
 module SimpleDrive
   # Raised while booting when a required setting is missing or malformed.
   # Defined here because config/puma.rb loads this file on its own.
@@ -7,12 +9,17 @@ module SimpleDrive
   # Values are checked here so that a misconfigured deployment fails while
   # booting rather than on its first request.
   class Settings
+    include FilteredOutput
+
     DEFAULT_MAX_BLOB_BYTES = 10 * 1024 * 1024
     TOP_LEVEL_KEYS = %i[api_token storage_backend max_blob_bytes].freeze
 
     # The b64token grammar of RFC 6750: what BearerAuthentication accepts from
     # clients, and therefore the only tokens that can ever match.
     TOKEN_FORMAT = %r{\A[A-Za-z0-9\-._~+/]+=*\z}
+
+    # Backend settings whose values are credentials (see config/simple_drive.yml).
+    SECRET_BACKEND_SETTINGS = %i[secret_access_key password].freeze
 
     # Largest request body worth reading for a given blob size limit: the
     # Base64 form of the largest accepted blob (4 bytes per 3, rounded up),
@@ -75,6 +82,13 @@ module SimpleDrive
     end
 
     private
+
+    def filtered_attributes
+      backends = @backend_settings.transform_values do |section|
+        section.to_h { |key, value| [ key, SECRET_BACKEND_SETTINGS.include?(key) ? filtered(value) : value ] }
+      end
+      { api_token: filtered(api_token), storage_backend:, max_blob_bytes:, backends: }
+    end
 
     def required_string(options, key, env_name, hint: nil)
       value = options[key].to_s.strip

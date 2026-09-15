@@ -9,6 +9,8 @@ module Storage
     # the Authorization header. The caller must send exactly the headers it
     # signed, because every one of them is part of the signature.
     class Signer
+      include SimpleDrive::FilteredOutput
+
       ALGORITHM = "AWS4-HMAC-SHA256".freeze
       SERVICE = "s3".freeze
       TERMINATOR = "aws4_request".freeze
@@ -53,6 +55,10 @@ module Storage
       end
 
       private
+
+      def filtered_attributes
+        { access_key_id: @access_key_id, region: @region, secret_access_key: filtered(@secret_access_key) }
+      end
 
       # Lowercase names, trimmed values with runs of whitespace collapsed,
       # sorted by name.

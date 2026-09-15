@@ -543,9 +543,12 @@ required explicitly because it is needed while the application is still being co
 
 ## Security considerations
 
-- **Secrets** (the API token, S3 credentials) come only from the environment; `.env*` files are
-  ignored by git (except `.env.example`, which holds placeholders) and `config/master.key` is
-  ignored as generated. Nothing in the repository is a real credential.
+- **Secrets** (the API token, S3 credentials, the FTP password) come only from the environment;
+  `.env*` files are ignored by git (except `.env.example`, which holds placeholders) and
+  `config/master.key` is ignored as generated. Nothing in the repository is a real credential.
+  The objects that hold them (`SimpleDrive::Settings`, the S3 signer and the FTP backend) show
+  `[FILTERED]` instead whenever they are printed: in the console (including `y`), with
+  `inspect`, `pp`, `to_yaml` or `to_json`, and in log lines or exception messages.
 - **Authentication** is enforced by a `before_action` in `ApplicationController`, so every
   controller inherits it; the token comparison is constant-time and malformed headers are rejected.
 - **Logging** never includes the token (Rails does not log request headers, and the parameter

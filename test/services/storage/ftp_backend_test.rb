@@ -86,6 +86,12 @@ class Storage::FtpBackendTest < ActiveSupport::TestCase
     assert_equal "ftp", @backend.name
   end
 
+  test "inspect shows the connection settings but not the password" do
+    assert_match(/host="ftp.example.test" root="blobs" options=\{port: 21, username: "drive", password: "\[FILTERED\]"/,
+                 @backend.inspect)
+    assert_not_includes @backend.inspect, SETTINGS[:password]
+  end
+
   test "uploads to a temporary name below the root and renames it into place" do
     data = (0..255).map(&:chr).join.b
 

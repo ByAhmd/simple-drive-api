@@ -74,6 +74,11 @@ class Storage::S3::SignerTest < ActiveSupport::TestCase
     assert_equal tidy, messy
   end
 
+  test "inspect leaves out the secret access key" do
+    assert_equal '#<Storage::S3::Signer access_key_id="AKIAIOSFODNN7EXAMPLE" region="us-east-1" ' \
+                 'secret_access_key="[FILTERED]">', @signer.inspect
+  end
+
   test "uri_encode follows the SigV4 rules" do
     encode = Storage::S3::Signer.method(:uri_encode)
 

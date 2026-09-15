@@ -1,4 +1,5 @@
 require "test_helper"
+require "pp"
 
 class StorageTest < ActiveSupport::TestCase
   def settings(backend, **sections)
@@ -24,6 +25,24 @@ class StorageTest < ActiveSupport::TestCase
     ftp = { host: "ftp.example.test", username: "u", password: "p", root: "blobs" }
 
     assert_instance_of Storage::FtpBackend, Storage.backend(settings("ftp", ftp: ftp))
+  end
+
+  test "printing the settings or a backend never shows a credential, in any common format" do
+    s3 = { endpoint: "http://localhost:9000", bucket: "bucket", region: "us-east-1",
+           access_key_id: "k", secret_access_key: "s3-secret-value" }
+    ftp = { host: "ftp.example.test", username: "u", password: "ftp-password-value" }
+    configured = settings("s3", api_token: "api-token-value", s3: s3, ftp: ftp)
+
+    # The console echoes results with pp and its y command prints YAML; JSON
+    # covers anything that serialises these objects.
+    [ configured, Storage.backend(configured), Storage.backend(settings("ftp", ftp: ftp)) ].each do |object|
+      { pp: object.pretty_inspect, yaml: object.to_yaml, json: object.to_json }.each do |format, output|
+        assert_includes output, "[FILTERED]", "#{object.class} as #{format}"
+        [ "api-token-value", "s3-secret-value", "ftp-password-value" ].each do |secret|
+          assert_not_includes output, secret, "#{object.class} printed a credential as #{format}"
+        end
+      end
+    end
   end
 
   test "rejects an unknown backend name" do

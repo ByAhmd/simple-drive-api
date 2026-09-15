@@ -15,6 +15,16 @@ class SimpleDrive::SettingsTest < ActiveSupport::TestCase
     assert_predicate settings, :frozen?
   end
 
+  test "inspect filters the API token and the backend credentials, showing unset ones as nil" do
+    settings = SimpleDrive::Settings.new(VALID.merge(api_token: "api-token-value",
+                                                     s3: { bucket: "b", secret_access_key: "s3-secret-value" },
+                                                     ftp: { username: "u", password: nil }))
+
+    assert_equal '#<SimpleDrive::Settings api_token="[FILTERED]" storage_backend="local" max_blob_bytes=300 ' \
+                 'backends={local: {root: "x"}, s3: {bucket: "b", secret_access_key: "[FILTERED]"}, ' \
+                 'ftp: {username: "u", password: nil}}>', settings.inspect
+  end
+
   test "accepts string keys as produced by config_for" do
     settings = SimpleDrive::Settings.new("api_token" => "t", "storage_backend" => "database",
                                          "max_blob_bytes" => "5", "s3" => { "bucket" => "b" })

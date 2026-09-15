@@ -8,6 +8,8 @@ module Storage
   # port mappings. Uploads go to a temporary name and are renamed into place
   # so that a partial transfer never appears under the final name.
   class FtpBackend < Backend
+    include SimpleDrive::FilteredOutput
+
     OPEN_TIMEOUT = 5
     TRANSPORT_ERRORS = [
       Net::FTPError, SocketError, SystemCallError, IOError, EOFError, Timeout::Error, OpenSSL::SSL::SSLError
@@ -77,6 +79,10 @@ module Storage
     end
 
     private
+
+    def filtered_attributes
+      { host: @host, root: @root, options: @options.merge(password: filtered(@options[:password])) }
+    end
 
     def session
       Net::FTP.open(@host, **@options) do |ftp|
