@@ -180,6 +180,23 @@ class Blobs::StoreTest < ActiveSupport::TestCase
     assert_equal 0, PendingUpload.count
   end
 
+  test "the blob is recorded only together with clearing its pending upload" do
+    create = PendingUpload.method(:create!)
+    failing_create = lambda do |**attributes|
+      create.call(**attributes).tap do |pending|
+        pending.define_singleton_method(:delete) { raise ActiveRecord::StatementInvalid, "database gone" }
+      end
+    end
+
+    PendingUpload.stub(:create!, failing_create) do
+      assert_raises(ActiveRecord::StatementInvalid) { @store.call(identifier: "atomic", data: HELLO) }
+    end
+
+    assert_equal 0, Blob.count
+    assert_equal 1, PendingUpload.count
+    assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
+  end
+
   test "a failed cleanup is logged, keeps the pending upload for the sweep and does not mask the original error" do
     @store.call(identifier: "race", data: HELLO)
     @backend.define_singleton_method(:delete) { |_key| raise Storage::Error, "cannot delete" }

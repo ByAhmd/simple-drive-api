@@ -24,6 +24,21 @@ class BlobsRakeTest < ActiveSupport::TestCase
     assert_equal "bytes", backend.read(fresh)
   end
 
+  test "sweep_orphans exits with an error when objects could not be removed" do
+    key = Storage::Backend.generate_key
+    PendingUpload.create!(storage_key: key, storage_backend: "local", created_at: 2.hours.ago)
+    failing = Storage.backend
+    failing.define_singleton_method(:delete) { |_key| raise Storage::Error, "disk unavailable" }
+
+    _, stderr = capture_io do
+      error = Storage.stub(:backend, failing) { assert_raises(SystemExit) { @task.invoke } }
+      assert_not error.success?
+    end
+
+    assert_includes stderr, "1 object(s) could not be removed and will be retried on the next run"
+    assert_equal [ key ], PendingUpload.pluck(:storage_key)
+  end
+
   test "sweep_orphans rejects a malformed grace period" do
     error = with_env("OLDER_THAN_MINUTES" => "soon") do
       assert_raises(SimpleDrive::ConfigurationError) { @task.invoke }

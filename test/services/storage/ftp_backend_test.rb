@@ -121,6 +121,20 @@ class Storage::FtpBackendTest < ActiveSupport::TestCase
     end
   end
 
+  test "delete also removes a temporary upload left by an interrupted transfer" do
+    with_fake_server do
+      @backend.write(@key, "complete".b)
+      @server.files["/blobs/#{@key}.tmp"] = "partial"
+      @backend.delete(@key)
+
+      assert_empty @server.files
+      @server.files["/blobs/#{@key}.tmp"] = "partial"
+      @backend.delete(@key)
+
+      assert_empty @server.files
+    end
+  end
+
   test "reports permanent errors other than 550 as storage failures, not as a missing file" do
     @server.define_singleton_method(:getbinaryfile) { |*| raise Net::FTPPermError, "530 Not logged in." }
     @server.define_singleton_method(:delete) { |*| raise Net::FTPPermError, "502 Command not implemented." }

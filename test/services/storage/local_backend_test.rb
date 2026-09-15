@@ -62,6 +62,28 @@ class Storage::LocalBackendTest < ActiveSupport::TestCase
     assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
   end
 
+  test "delete also removes a temporary file left by an interrupted write" do
+    key = Storage::Backend.generate_key
+    backend.write(key, "complete".b)
+    temporary = @root.join(key[0, 2], key[2, 2], "#{key}.tmp")
+    temporary.binwrite("partial")
+
+    backend.delete(key)
+
+    assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
+  end
+
+  test "delete removes a temporary file even when the write never completed" do
+    key = Storage::Backend.generate_key
+    temporary = @root.join(key[0, 2], key[2, 2], "#{key}.tmp")
+    temporary.dirname.mkpath
+    temporary.binwrite("partial")
+
+    backend.delete(key)
+
+    assert_not temporary.exist?
+  end
+
   test "rejects keys that are not application-generated" do
     [ "../../etc/passwd", "..\\..\\secret", "/etc/passwd", "plain-name", "", nil,
       "#{Storage::Backend.generate_key}/../x" ].each do |key|

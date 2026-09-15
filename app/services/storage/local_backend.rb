@@ -35,8 +35,11 @@ module Storage
       raise Error, "local storage read failed: #{e.message}"
     end
 
+    # Also removes the temporary file an interrupted write may have left.
     def delete(key)
-      path_for(key).delete
+      path = path_for(key)
+      FileUtils.rm_f(temporary_path(path))
+      path.delete
     rescue Errno::ENOENT
       nil
     rescue SystemCallError, IOError => e
@@ -55,11 +58,15 @@ module Storage
     # Writes a sibling temporary file and renames it into place, so that a
     # crash mid-write cannot leave a truncated object behind.
     def write_atomically(path, data)
-      temporary = path.sub_ext(".tmp")
+      temporary = temporary_path(path)
       temporary.binwrite(data)
       File.rename(temporary, path)
     ensure
       FileUtils.rm_f(temporary) if temporary
+    end
+
+    def temporary_path(path)
+      path.sub_ext(".tmp")
     end
   end
 end

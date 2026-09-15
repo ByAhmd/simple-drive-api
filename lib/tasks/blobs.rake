@@ -6,9 +6,12 @@ namespace :blobs do
     result = Blobs::SweepOrphans.new(backend: backend, older_than: minutes.minutes).call
 
     puts "Removed #{result.removed} orphaned object(s) older than #{minutes} minute(s) from the #{backend.name} backend."
-    puts "#{result.failed} could not be removed and will be retried on the next run." if result.failed.positive?
     if result.other_backends.positive?
       puts "#{result.other_backends} pending upload(s) belong to other backends; run the sweep with those configured."
+    end
+    # A non-zero exit status lets cron and job monitors notice a sweep that cannot delete.
+    if result.failed.positive?
+      abort "#{result.failed} object(s) could not be removed and will be retried on the next run; see the log for the reasons."
     end
   end
 end

@@ -45,8 +45,8 @@ module Storage
     def write(key, data)
       validate_key!(key)
       session do |ftp|
-        ftp.storbinary("STOR #{key}.tmp", StringIO.new(data), Net::FTP::DEFAULT_BLOCKSIZE)
-        ftp.rename("#{key}.tmp", key)
+        ftp.storbinary("STOR #{temporary_name(key)}", StringIO.new(data), Net::FTP::DEFAULT_BLOCKSIZE)
+        ftp.rename(temporary_name(key), key)
       end
     end
 
@@ -64,12 +64,15 @@ module Storage
       end
     end
 
+    # Also removes the temporary file an interrupted upload may have left.
     def delete(key)
       validate_key!(key)
       session do |ftp|
-        ftp.delete(key)
-      rescue Net::FTPPermError => e
-        raise unless file_unavailable?(e)
+        [ temporary_name(key), key ].each do |name|
+          ftp.delete(name)
+        rescue Net::FTPPermError => e
+          raise unless file_unavailable?(e)
+        end
       end
     end
 
@@ -105,6 +108,10 @@ module Storage
 
     def file_unavailable?(error)
       error.message.start_with?("550")
+    end
+
+    def temporary_name(key)
+      "#{key}.tmp"
     end
   end
 end
