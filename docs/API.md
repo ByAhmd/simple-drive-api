@@ -99,6 +99,9 @@ The blob content, Base64-encoded (RFC 4648, standard alphabet, with padding).
 { "id": "any_valid_string_or_identifier", "size": "27", "created_at": "2026-09-14T09:31:02Z" }
 ```
 
+A request that fails never leaves a blob behind: nothing is recorded, and bytes that were
+already written are deleted again (or, if the process stops first, by the server's cleanup task).
+
 `size` is the decoded size in bytes, rendered as a string exactly as in the specification;
 `created_at` is the UTC time the blob was recorded, in ISO 8601 with second precision.
 

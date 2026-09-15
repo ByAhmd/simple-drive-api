@@ -18,6 +18,7 @@ The API reference lives in [docs/API.md](docs/API.md).
 - [Storage backends](#storage-backends)
 - [How the S3 implementation works](#how-the-s3-implementation-works)
 - [Running the application](#running-the-application)
+- [Cleaning up interrupted uploads](#cleaning-up-interrupted-uploads)
 - [Running the tests](#running-the-tests)
 - [API overview](#api-overview)
 - [Design decisions](#design-decisions)
@@ -54,6 +55,7 @@ Storage::Backend ─ write(key, data) / read(key) / delete(key)
 | Storage abstraction | `app/services/storage.rb`, `app/services/storage/backend.rb` | The backend interface, the error classes and `Storage.backend`, which builds the configured backend from settings. |
 | Backends | `app/services/storage/*_backend.rb`, `app/services/storage/s3/` | One class per backend; each translates its own failures into `Storage::Error` / `Storage::NotFound`. |
 | Metadata | `app/models/blob.rb`, `db/migrate/…create_blobs.rb` | The tracking table: identifier, size, backend name, storage key, timestamps. Never holds blob bytes. |
+| Upload journal | `app/models/pending_upload.rb`, `app/services/blobs/sweep_orphans.rb`, `lib/tasks/blobs.rake` | One row per upload in progress, so that bytes left behind by an interrupted upload can be found and removed. |
 | Database backend table | `app/models/blob_content.rb`, `db/migrate/…create_blob_contents.rb` | Storage key plus bytes. Independent of the metadata table. |
 | Boot-time code | `lib/simple_drive/` | Settings validation, the shared JSON error shape, the body-size middleware and the JSON exceptions app. Required explicitly from `config/application.rb`. |
 
@@ -95,6 +97,10 @@ bin/rails db:prepare
 
 The schema is created from `db/schema.rb` by `db:prepare` on a fresh database; running the
 migrations in `db/migrate` against an empty database produces the same schema.
+
+Every command that loads the application, including `bin/rails console` and the rake tasks, needs
+`SIMPLE_DRIVE_API_TOKEN`, so run `bin/setup` or create `.env` first; otherwise the command stops with
+`SIMPLE_DRIVE_API_TOKEN must be set`.
 
 On Windows, run the scripts through Ruby (`ruby bin/setup --skip-server`,
 `ruby bin/rails server`, `ruby bin/rails test`); PowerShell does not execute the shebang line.
@@ -285,6 +291,40 @@ server on port 2121 (user `drive`, password `drivepass`); then use the values sh
 listen on `127.0.0.1` only, so use that address rather than `localhost`, which some systems
 (Windows among them) try over IPv6 first, adding about two seconds to every connection.
 
+To use the storage layer directly from Ruby, whatever backend is configured:
+
+```bash
+bin/rails console
+```
+
+```ruby
+backend = Storage.backend
+key = Storage::Backend.generate_key
+backend.write(key, "hello".b)
+backend.read(key)   # => "hello"
+backend.delete(key)
+```
+
+## Cleaning up interrupted uploads
+
+If the process stops between writing a blob's bytes and recording its metadata (a crash, a
+deployment that kills the server), the bytes stay in storage with no blob pointing at them. They
+are never visible through the API, and every such upload is recorded in the `pending_uploads`
+table. This task deletes them:
+
+```bash
+bin/rails blobs:sweep_orphans
+```
+
+It only touches uploads older than `OLDER_THAN_MINUTES` (default `60`), so requests still in
+progress are never affected, and it never deletes bytes that a blob points to. It works on the
+configured backend and reports rows that belong to other backends. Run it on a schedule, for
+example hourly from cron:
+
+```bash
+0 * * * * cd /srv/simple-drive && bin/rails blobs:sweep_orphans
+```
+
 ## Running the tests
 
 ```bash
@@ -309,7 +349,10 @@ The suite (Minitest, `test/`) covers:
   (temporary name and rename, root creation including a concurrent one, 550 versus other error
   replies, error translation, connection options, credentials kept out of messages);
 - `Blobs::Store` and `Blobs::Retrieve`: strict Base64, type checks, size limits, duplicate ids,
-  the race on the unique index and the cleanup that follows, backend failures, backend mismatch;
+  the race on the unique index and the cleanup that follows, backend failures, backend mismatch,
+  and a simulated crash between writing and recording;
+- the orphan sweep and its rake task: stale uploads removed, uploads in progress and referenced
+  bytes left alone, failed deletions retried, run against every backend;
 - the settings object and the real `config/simple_drive.yml` rendering, the body-size
   middleware and the exceptions app;
 - request tests for authentication, both endpoints, every error the API layer produces (the
@@ -320,6 +363,25 @@ Static analysis and dependency checks: `bin/rubocop`, `bin/brakeman`, `bin/bundl
 all of them plus the tests with `bin/ci` (which drives the other scripts through the shell, so
 it is for Linux and macOS). The GitHub Actions workflow in `.github/workflows/ci.yml`
 runs the same set and starts MinIO and an FTP server so both integration suites run there too.
+
+### Running every test, with no skips
+
+Without the environment variables below, the S3 and FTP integration tests are skipped (17 skips).
+To run everything, start MinIO and the FTP server with Docker, then set both groups of variables:
+
+```bash
+docker compose up -d
+```
+
+```bash
+S3_TEST_ENDPOINT=http://127.0.0.1:9000 S3_TEST_BUCKET=simple-drive-test S3_TEST_ACCESS_KEY_ID=minioadmin S3_TEST_SECRET_ACCESS_KEY=minioadmin FTP_TEST_HOST=127.0.0.1 FTP_TEST_PORT=2121 FTP_TEST_USERNAME=drive FTP_TEST_PASSWORD=drivepass bin/rails test
+```
+
+In PowerShell:
+
+```powershell
+$env:S3_TEST_ENDPOINT="http://127.0.0.1:9000"; $env:S3_TEST_BUCKET="simple-drive-test"; $env:S3_TEST_ACCESS_KEY_ID="minioadmin"; $env:S3_TEST_SECRET_ACCESS_KEY="minioadmin"; $env:FTP_TEST_HOST="127.0.0.1"; $env:FTP_TEST_PORT="2121"; $env:FTP_TEST_USERNAME="drive"; $env:FTP_TEST_PASSWORD="drivepass"; ruby bin/rails test
+```
 
 ### Running the S3 integration tests
 
@@ -417,9 +479,16 @@ stored. The unique index on `blobs.identifier` is the arbiter between concurrent
 same id: exactly one insert succeeds, the loser deletes the object it wrote and answers `409`.
 A cheap existence check before the upload spares the backend the work in the common case. No
 database transaction is held across a backend write, so a slow S3 upload never blocks other
-writers (SQLite allows a single writer at a time). The accepted gap: if the process dies between
-the write and the insert, an orphaned object with no metadata remains; it is harmless, invisible
-to the API and can be reclaimed by comparing storage keys with the metadata table.
+writers (SQLite allows a single writer at a time).
+
+**Interrupted uploads are journaled, not guessed.** Without distributed transactions, a process
+that dies after writing the bytes but before inserting the blob leaves an orphaned object. So
+`Blobs::Store` records a `pending_uploads` row before it writes and deletes that row in the same
+transaction that inserts the blob. A row that outlives its request therefore names exactly the
+objects that may be orphaned, including the bytes of a failed store whose cleanup also failed and
+of an S3 upload that timed out after the server had stored it. `bin/rails blobs:sweep_orphans`
+deletes them; no backend needs a "list everything" operation. The cost is two small SQL statements
+per upload.
 
 **Uniqueness is enforced by the database, not by a Rails validation.** An Active Record
 uniqueness validation is racy and would turn a lost race into a validation error; the unique
@@ -499,8 +568,10 @@ required explicitly because it is needed while the application is still being co
   browsers cannot call the API cross-origin unless an operator adds `rack-cors` deliberately.
 - **Error responses** carry fixed messages; stack traces, paths, S3 endpoints and signatures stay
   in the server log. Rails' debug error pages are switched off in every environment.
-- **Host authorization**: set `config.hosts` in `config/environments/production.rb` to the public
-  hostname when deploying, as the generated comment suggests.
+- **Host authorization**: not needed locally, where Rails allows `localhost`. When deploying, set
+  `config.hosts` in `config/environments/production.rb` to the public hostname, as the generated
+  comment suggests; that blocks DNS rebinding, which matters less here because every request also
+  needs the token.
 - Static analysis (`bin/brakeman`) and the dependency audit (`bin/bundler-audit`) run in CI
   and report nothing.
 
@@ -515,8 +586,12 @@ required explicitly because it is needed while the application is still being co
   only; ids are immutable once stored.
 - **No retries** against S3 or FTP; a failed store leaves no trace and the client retries the
   whole request.
-- **Orphaned objects** can remain after a crash between the backend write and the metadata
-  insert (see Design decisions); they never affect API behaviour.
+- **Orphaned objects** can exist between a crash and the next run of
+  `bin/rails blobs:sweep_orphans` (see Design decisions). They are never visible through the
+  API; scheduling the task is up to the operator.
+- **No rate limiting.** The specification does not ask for it, and with one shared token a
+  per-client limit would mean nothing. Put the service behind a reverse proxy or API gateway that
+  limits requests, or use Rails' built-in `rate_limit` if it is ever needed.
 - **Switching backends does not move data.** Blobs stored by a previous backend answer `503`
   until that backend is configured again or the data is migrated.
 - **SQLite** is the default database: single-writer, file-based, appropriate for this scope.
