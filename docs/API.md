@@ -19,8 +19,9 @@ not valid JSON is answered `401`, not `400`, when the token is missing or wrong.
 
 A few requests are refused before the controller runs, whatever the token: an oversized body
 (`413`), an unparsable `Content-Type` (`415`) or `Accept` (`406`) header, a path or body that is
-not valid UTF-8 or percent-encoding (`400`), and a path with no route (`404`). None of them
-returns data. There is no unauthenticated route.
+not valid UTF-8, a query string or body that is not valid UTF-8 or percent-encoding (`400`), and a
+path with no route (`404`). None of them returns data. The application has no unauthenticated
+route.
 
 ## Error format
 
@@ -100,7 +101,8 @@ The blob content, Base64-encoded (RFC 4648, standard alphabet, with padding).
 ```
 
 A request that fails never leaves a blob behind: nothing is recorded, and bytes that were
-already written are deleted again (or, if the process stops first, by the server's cleanup task).
+already written are deleted again. If the server process stops first, or that deletion fails, the
+bytes are removed the next time the operator runs `bin/rails blobs:sweep_orphans` (see the README).
 
 `size` is the decoded size in bytes, rendered as a string exactly as in the specification;
 `created_at` is the UTC time the blob was recorded, in ISO 8601 with second precision.
@@ -156,10 +158,11 @@ curl -i http://localhost:3000/v1/blobs/hello \
 Store a file and read it back:
 
 ```bash
-curl -s -X POST http://localhost:3000/v1/blobs \
-  -H "Authorization: Bearer $SIMPLE_DRIVE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"id\": \"photos/2024/sunrise.jpg\", \"data\": \"$(base64 -w0 sunrise.jpg)\"}"
+printf '{"id": "photos/2024/sunrise.jpg", "data": "%s"}' "$(base64 -w0 sunrise.jpg)" |
+  curl -s -X POST http://localhost:3000/v1/blobs \
+    -H "Authorization: Bearer $SIMPLE_DRIVE_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @-
 
 curl -s http://localhost:3000/v1/blobs/photos/2024/sunrise.jpg \
   -H "Authorization: Bearer $SIMPLE_DRIVE_API_TOKEN" | jq -r .data | base64 -d > copy.jpg
