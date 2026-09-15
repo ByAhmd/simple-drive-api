@@ -48,6 +48,31 @@ class AuthenticationTest < ActionDispatch::IntegrationTest
     assert_unauthorized
   end
 
+  test "requests that cannot be parsed are refused before authentication, whatever the token" do
+    body_limit = Rails.configuration.x.simple_drive.max_request_body_bytes
+
+    post "/v1/blobs", params: "x" * (body_limit + 1), headers: { "Content-Type" => "application/json" }
+    assert_refused :content_too_large, "payload_too_large"
+
+    post "/v1/blobs", params: +"{}", headers: { "Content-Type" => "garbage" }
+    assert_refused :unsupported_media_type, "unsupported_media_type"
+
+    get "/v1/blobs/hello", headers: { "Accept" => "application" }
+    assert_refused :not_acceptable, "not_acceptable"
+
+    get "/v1/blobs/%FF"
+    assert_refused :bad_request, "bad_request"
+
+    # Set directly: the test client refuses to build a URI with a bad escape.
+    [ "a=%ZZ", "a=%FF" ].each do |query|
+      get "/v1/blobs/hello", env: { "QUERY_STRING" => query }
+      assert_refused :bad_request, "bad_request", query
+    end
+
+    post "/v1/blobs", params: +"a=%ZZ", headers: { "Content-Type" => "application/x-www-form-urlencoded" }
+    assert_refused :bad_request, "bad_request"
+  end
+
   test "there is no unauthenticated endpoint serving data, not even a health check" do
     [ "/up", "/" ].each do |path|
       get path
@@ -64,5 +89,11 @@ class AuthenticationTest < ActionDispatch::IntegrationTest
     assert_equal 'Bearer realm="Simple Drive"', response.headers["WWW-Authenticate"], message
     assert_equal({ "error" => { "code" => "unauthorized", "message" => "A valid bearer token is required" } },
                  response.parsed_body, message)
+  end
+
+  def assert_refused(status, code, message = nil)
+    assert_response status, message
+    assert_nil response.headers["WWW-Authenticate"], message
+    assert_equal code, response.parsed_body.dig("error", "code"), message
   end
 end
