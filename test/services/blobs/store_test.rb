@@ -20,6 +20,7 @@ class Blobs::StoreTest < ActiveSupport::TestCase
     assert_equal "local", blob.storage_backend
     assert_match Storage::Backend::KEY_FORMAT, blob.storage_key
     assert_equal "Hello Simple Storage World!", @backend.read(blob.storage_key)
+    assert_equal 0, PendingUpload.count
   end
 
   test "preserves binary data exactly" do
@@ -123,16 +124,47 @@ class Blobs::StoreTest < ActiveSupport::TestCase
     assert_equal 1, Blob.count
     assert_equal 1, Dir.glob(@root.join("**/*")).count { |path| File.file?(path) }
     assert_equal "Hello Simple Storage World!", @backend.read(Blob.find_by!(identifier: "race").storage_key)
+    assert_equal 0, PendingUpload.count
   end
 
   test "leaves no metadata behind when the backend write fails" do
     failing = Class.new(Storage::Backend) do
       def name = "failing"
       def write(_key, _data) = raise(Storage::Error, "disk on fire")
+      def delete(_key) = nil
     end.new
 
     assert_raises(Storage::Error) { Blobs::Store.new(backend: failing, max_bytes: 64).call(identifier: "x", data: HELLO) }
     assert_equal 0, Blob.count
+    assert_equal 0, PendingUpload.count
+  end
+
+  test "removes the bytes of a write that failed after the backend had stored them" do
+    # An S3 PUT can time out on the client after the server stored the object.
+    @backend.define_singleton_method(:write) { |key, data| super(key, data); raise Storage::Error, "read timeout" }
+
+    assert_raises(Storage::Error) { @store.call(identifier: "late", data: HELLO) }
+
+    assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
+    assert_equal 0, Blob.count
+    assert_equal 0, PendingUpload.count
+  end
+
+  test "a process that dies between writing and recording leaves a pending upload the sweep removes" do
+    Blob.stub(:transaction, ->(*) { raise Interrupt }) do
+      assert_raises(Interrupt) { @store.call(identifier: "crash", data: HELLO) }
+    end
+
+    pending = PendingUpload.sole
+    assert_equal "Hello Simple Storage World!", @backend.read(pending.storage_key)
+    assert_equal 0, Blob.count
+
+    travel 2.hours do
+      assert_equal 1, Blobs::SweepOrphans.new(backend: @backend).call.removed
+    end
+
+    assert_raises(Storage::NotFound) { @backend.read(pending.storage_key) }
+    assert_equal 0, PendingUpload.count
   end
 
   test "removes the written object when recording the metadata fails" do
@@ -145,9 +177,10 @@ class Blobs::StoreTest < ActiveSupport::TestCase
 
     assert_empty Dir.glob(@root.join("**/*")).select { |path| File.file?(path) }
     assert_equal 0, Blob.count
+    assert_equal 0, PendingUpload.count
   end
 
-  test "a failed cleanup is logged but does not mask the original error" do
+  test "a failed cleanup is logged, keeps the pending upload for the sweep and does not mask the original error" do
     @store.call(identifier: "race", data: HELLO)
     @backend.define_singleton_method(:delete) { |_key| raise Storage::Error, "cannot delete" }
     log = StringIO.new
@@ -158,6 +191,9 @@ class Blobs::StoreTest < ActiveSupport::TestCase
       end
     end
 
-    assert_match(/Could not remove object \h{8}-[\h-]+ after a failed store: cannot delete/, log.string)
+    assert_match(/Could not remove object \h{8}-[\h-]+ after a failed store; the orphan sweep will retry: cannot delete/,
+                 log.string)
+    assert_equal 1, PendingUpload.count
+    assert_equal 1, Blob.count
   end
 end

@@ -215,12 +215,14 @@ class BlobsApiTest < ActionDispatch::IntegrationTest
       def name = "local"
       def write(_key, _data) = raise(Storage::Error, "disk /srv/secret is full")
       def read(_key) = raise(Storage::Error, "disk /srv/secret is gone")
+      def delete(_key) = raise(Storage::Error, "disk /srv/secret is gone")
     end.new
 
     Storage.stub(:backend, broken) do
       post_blob id: "x", data: HELLO
       assert_error :service_unavailable, "storage_unavailable", "The storage backend is unavailable; try again later"
       assert_equal 0, Blob.count
+      assert_equal 1, PendingUpload.count
 
       Blob.create!(identifier: "y", size: 1, storage_backend: "local", storage_key: Storage::Backend.generate_key)
       get_blob "y"

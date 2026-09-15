@@ -53,6 +53,12 @@ class BackendCompatibilityTest < ActionDispatch::IntegrationTest
 
         get_blob "compat/#{name}.missing"
         assert_response :not_found
+
+        orphan = Storage::Backend.generate_key
+        backend.write(orphan, "left behind by a crash".b)
+        PendingUpload.create!(storage_key: orphan, storage_backend: name, created_at: 2.hours.ago)
+        assert_equal 1, Blobs::SweepOrphans.new(backend: backend).call.removed
+        assert_raises(Storage::NotFound) { backend.read(orphan) }
       end
     ensure
       Blob.find_each { |blob| backend.delete(blob.storage_key) } if backend

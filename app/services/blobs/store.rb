@@ -9,8 +9,12 @@ module Blobs
   # blobs.identifier decides between concurrent requests for the same id: the
   # loser deletes the object it wrote and reports a conflict. No database
   # transaction is held across the backend write, so a slow upload never
-  # blocks other writers; the price is that a crash between the two steps can
-  # leave an orphaned object behind (never a dangling metadata row).
+  # blocks other writers.
+  #
+  # Every write is announced by a PendingUpload row first, and that row is
+  # deleted together with the blob insert. If the process dies after writing,
+  # or a failed request cannot delete what it wrote, the row stays behind and
+  # Blobs::SweepOrphans removes the object later.
   class Store
     BASE64_WHITESPACE = " \t\r\n".freeze
 
@@ -28,8 +32,8 @@ module Blobs
       raise ValidationError, blob.errors.full_messages.to_sentence unless blob.valid?
       raise DuplicateIdentifier, "A blob with this id already exists" if Blob.exists?(identifier: identifier)
 
-      backend.write(blob.storage_key, bytes)
-      claim(blob)
+      pending = PendingUpload.create!(storage_key: blob.storage_key, storage_backend: backend.name)
+      store(blob, pending, bytes)
     end
 
     private
@@ -71,24 +75,32 @@ module Blobs
       "data exceeds the maximum blob size of #{max_bytes} bytes"
     end
 
-    # Inserts the metadata row. The unique index is the arbiter under
-    # concurrency; whatever goes wrong here, the object written above is
-    # removed again so that a failed request leaves nothing behind.
-    def claim(blob)
-      blob.save!
+    # Writes the bytes, then inserts the blob and clears the pending row in one
+    # transaction. Whatever goes wrong, including a write that failed after the
+    # backend had already stored the bytes, the object is removed again.
+    def store(blob, pending, bytes)
+      backend.write(blob.storage_key, bytes)
+      Blob.transaction do
+        blob.save!
+        pending.delete
+      end
       blob
     rescue ActiveRecord::RecordNotUnique
-      discard(blob.storage_key)
+      abandon(pending)
       raise DuplicateIdentifier, "A blob with this id already exists"
     rescue StandardError
-      discard(blob.storage_key)
+      abandon(pending)
       raise
     end
 
-    def discard(key)
-      backend.delete(key)
-    rescue Storage::Error => e
-      Rails.logger.warn("Could not remove object #{key} after a failed store: #{e.message}")
+    # Deletes the object of a failed store and its pending row. When that fails
+    # the row is kept, so the sweep retries later.
+    def abandon(pending)
+      backend.delete(pending.storage_key)
+      pending.delete
+    rescue Storage::Error, ActiveRecord::ActiveRecordError => e
+      Rails.logger.warn("Could not remove object #{pending.storage_key} after a failed store; " \
+                        "the orphan sweep will retry: #{e.message}")
     end
   end
 end
