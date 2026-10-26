@@ -248,8 +248,8 @@ GEM
       rubocop-rails (>= 2.30)
     ruby-progressbar (1.13.0)
     securerandom (0.4.1)
-    sqlite3 (2.9.6-x64-mingw-ucrt)
-    sqlite3 (2.9.6-x86_64-linux-gnu)
+    sqlite3 (2.10.1-x64-mingw-ucrt)
+    sqlite3 (2.10.1-x86_64-linux-gnu)
     thor (1.5.0)
     time (0.4.2)
       date
